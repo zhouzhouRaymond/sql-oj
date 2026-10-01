@@ -1,7 +1,10 @@
+import os
+
 import requests
 from typing import List, Dict, Any
 
-JUDGE_SERVICE_URL = "http://localhost:8080/judge"
+# 判题服务地址，可通过环境变量 JUDGE_SERVICE_URL 覆盖（容器化部署时指向 judge-service 服务）
+JUDGE_SERVICE_URL = os.environ.get("JUDGE_SERVICE_URL", "http://localhost:8080/judge")
 
 def judge_submission(submitted_sql: str, test_cases: List[Dict], create_table_sql: str = "") -> Dict[str, Any]:
     """

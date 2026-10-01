@@ -8,6 +8,10 @@ export const submitSQL = (data: {
   return request.post('/submissions/submit/', data)
 }
 
+export const getSubmission = (id: number) => {
+  return request.get(`/submissions/${id}/`)
+}
+
 export const getSubmissions = (params?: { question_id?: number }) => {
   return request.get('/submissions/', { params })
 }

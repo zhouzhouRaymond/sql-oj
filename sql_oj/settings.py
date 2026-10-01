@@ -10,6 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+
 import pymysql
 pymysql.install_as_MySQLdb()
 
@@ -19,16 +21,41 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+# 环境变量读取辅助：便于容器化/多环境部署，未设置时回退到内置默认值
+def env_str(key: str, default: str) -> str:
+    """读取字符串环境变量，缺失或为空时返回默认值。"""
+    value = os.environ.get(key)
+    return default if value is None or value == "" else value
+
+
+def env_bool(key: str, default: bool) -> bool:
+    """读取布尔环境变量，识别 1/true/yes/on（大小写不敏感）。"""
+    value = os.environ.get(key)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-p!mb461@nlo-$dq@66qheq#ppzjvqgibs_03oh_u4i=d_o07wa'
+# 可通过环境变量 DJANGO_SECRET_KEY 覆盖（容器化部署时建议显式设置）
+SECRET_KEY = env_str(
+    'DJANGO_SECRET_KEY',
+    'django-insecure-p!mb461@nlo-$dq@66qheq#ppzjvqgibs_03oh_u4i=d_o07wa',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# 可通过环境变量 DJANGO_DEBUG 覆盖（如 DJANGO_DEBUG=False）
+DEBUG = env_bool('DJANGO_DEBUG', True)
 
-ALLOWED_HOSTS = []
+# 逗号分隔的主机列表；容器内前端 Nginx 以服务名 backend 访问，故默认放行所有主机
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in env_str('DJANGO_ALLOWED_HOSTS', '*').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -82,18 +109,21 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'sql_oj.wsgi.application'
 
+ASGI_APPLICATION = 'sql_oj.asgi.application'
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# 连接参数均可通过环境变量覆盖（容器化部署时指向 mysql 服务）
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'sql_oj_db',
-        'USER': 'root',
-        'PASSWORD': '061015', 
-        'HOST': 'localhost',
-        'PORT': '3306',
+        'NAME': env_str('MYSQL_DATABASE', 'sql_oj_db'),
+        'USER': env_str('MYSQL_USER', 'root'),
+        'PASSWORD': env_str('MYSQL_PASSWORD', 'sql_oj'),
+        'HOST': env_str('MYSQL_HOST', 'localhost'),
+        'PORT': env_str('MYSQL_PORT', '3306'),
         'OPTIONS': {'charset': 'utf8mb4'},
     }
 }

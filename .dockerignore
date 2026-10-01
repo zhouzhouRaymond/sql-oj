@@ -1,0 +1,27 @@
+# 后端镜像构建上下文忽略项（缩小构建上下文、避免把本地环境打进镜像）
+.git
+.gitignore
+.vscode
+.idea
+
+# Python 虚拟环境与编译缓存
+venv
+env
+.venv
+**/__pycache__
+*.py[cod]
+*.log
+*.egg-info
+
+# 环境变量（含敏感信息）
+.env
+
+# 其他服务的源码各自有独立构建上下文，无需打进后端镜像
+sql-oj-frontend
+judge_service
+
+# 本地临时文件
+*.tmp
+
+# 本地导出/打包产物（如 ARM64 镜像 tar 体积很大，不应进入构建上下文）
+dist

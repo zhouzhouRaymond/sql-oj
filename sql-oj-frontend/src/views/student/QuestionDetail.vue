@@ -84,7 +84,7 @@
           <div class="status">
             <span>状态：</span>
             <el-tag :type="statusTagType(result.execution_status)">
-              {{ result.execution_status || 'PENDING' }}
+              {{ statusText(result.execution_status) }}
             </el-tag>
           </div>
           <div class="score">
@@ -107,7 +107,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
-import { submitSQL } from '../../api/submissions'
+import { getSubmission, submitSQL } from '../../api/submissions'
 
 const route = useRoute()
 const router = useRouter()
@@ -187,6 +187,23 @@ const loadQuestion = async () => {
   }
 }
 
+const POLL_INTERVAL = 1500
+const POLL_MAX_TRIES = 40 // 最长约 60s
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+// 判题已改为异步：提交后轮询该提交的状态，直到出结果（非 PENDING）
+const pollResult = async (submissionId: number) => {
+  for (let i = 0; i < POLL_MAX_TRIES; i++) {
+    const res = await getSubmission(submissionId)
+    result.value = res.data
+    const status = res.data?.execution_status
+    if (status && status !== 'PENDING') return
+    await sleep(POLL_INTERVAL)
+  }
+  ElMessage.warning('判题耗时较长，请稍后在“我的提交”中查看结果')
+}
+
 const handleSubmit = async () => {
   if (!sqlCode.value.trim()) {
     ElMessage.warning('请输入 SQL 语句')
@@ -200,8 +217,11 @@ const handleSubmit = async () => {
       submitted_sql: sqlCode.value,
       exam_id: null
     })
+    // 后端异步判题：先拿到 PENDING 的提交记录，再轮询最终结果
     result.value = res.data
-    ElMessage.success('提交成功 ✅')
+    if (res.data?.id) {
+      await pollResult(res.data.id)
+    }
   } catch (error: any) {
     ElMessage.error(error.response?.data?.error || '提交失败')
   } finally {
@@ -240,9 +260,16 @@ const statusTagType = (status: string) => {
   switch (status) {
     case 'ACCEPTED': return 'success'
     case 'WRONG_ANSWER': return 'danger'
+    case 'ERROR': return 'danger'
     case 'TIMEOUT': return 'warning'
+    case 'PENDING': return 'info'
     default: return 'info'
   }
+}
+
+const statusText = (status: string) => {
+  if (!status || status === 'PENDING') return '判题中…'
+  return status
 }
 
 onMounted(() => {

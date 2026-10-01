@@ -1,33 +1,75 @@
+import logging
+import signal
+import threading
 import time
-import docker
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, closing, contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
+from uuid import uuid4
+
 import psycopg2
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 import uvicorn
+from fastapi import FastAPI
+from psycopg2 import sql
 from psycopg2.errors import QueryCanceled
-from contextlib import closing
+from psycopg2.pool import PoolError
+from pydantic import BaseModel, Field
 
-DOCKER_IMAGE = "postgres:15-alpine"
-DB_NAME = "judge_db"
-DB_USER = "judge_user"
-DB_PASSWORD = "judge_pass"
-CONTAINER_TIMEOUT = 60
+from judge_config import get_int, get_str
+
+logger = logging.getLogger("judge_service")
+logging.basicConfig(level=logging.INFO)
+
+# 数据库相关配置统一从配置文件（judge_service/.env）读取，详见 judge_config.py 与 .env.example
+DB_NAME = get_str("JUDGE_DB_NAME", "judge_db")
+DB_USER = get_str("JUDGE_DB_USER", "judge_user")
+DB_PASSWORD = get_str("JUDGE_DB_PASSWORD", "judge_pass")
+DB_HOST = get_str("JUDGE_DB_HOST", "127.0.0.1")
+DB_PORT = get_int("JUDGE_DB_PORT", 5433)  # 与 docker-compose.yml 端口映射一致
+DB_READY_TIMEOUT = get_int("JUDGE_DB_READY_TIMEOUT", 60)
+DB_POOL_MAX = get_int("JUDGE_DB_POOL_MAX", 20)
+# 常驻（预热）连接数：psycopg2 仅在空闲连接数 < minconn 时复用连接，否则用完即关闭，
+# 导致高并发下反复建连。默认与最大连接数相同，保持连接常驻、省掉重连开销。
+DB_POOL_MIN = get_int("JUDGE_DB_POOL_MIN", DB_POOL_MAX)
 SQL_TIMEOUT = 30
-MEM_LIMIT = "512m"
+MAX_TIMEOUT = 300
+POLL_INTERVAL = 0.5
+DB_CONNECT_TIMEOUT = get_int("JUDGE_DB_CONNECT_TIMEOUT", 2)  # 单次连接尝试超时（秒）
+CASE_CONCURRENCY = get_int("JUDGE_CASE_CONCURRENCY", 4)  # 单个请求内测试用例的并行度
+POOL_ACQUIRE_TIMEOUT = get_int("JUDGE_POOL_ACQUIRE_TIMEOUT", 10)  # 等待空闲连接的最长秒数
+POLL_ACQUIRE_INTERVAL = 0.02  # 池耗尽时轮询等待空闲连接的间隔（秒）
 
-app = FastAPI(title="SQL Judge Service", version="2.0.0")
-docker_client = docker.from_env()
+# psycopg2 连接池，lifespan 启动时初始化
+db_pool: Optional[Any] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 判题库容器由 docker-compose 创建（见 docker-compose.yml），权限收敛在容器 initdb 脚本完成
+    global db_pool
+    wait_for_db(DB_HOST, DB_PORT)
+    db_pool = psycopg2.pool.ThreadedConnectionPool(
+        DB_POOL_MIN, DB_POOL_MAX,
+        host=DB_HOST, port=DB_PORT, database=DB_NAME,
+        user=DB_USER, password=DB_PASSWORD,
+    )
+    yield
+    if db_pool is not None:
+        db_pool.closeall()
+
+
+app = FastAPI(title="SQL Judge Service", version="2.3.0", lifespan=lifespan)
 
 class TestCase(BaseModel):
     expected_output: str
     test_input: Optional[str] = ""
 
 class JudgeRequest(BaseModel):
-    submitted_sql: str
-    test_cases: List[TestCase]
+    submitted_sql: str = Field(..., min_length=1)
+    test_cases: List[TestCase] = Field(..., min_length=1)
     create_table_sql: Optional[str] = ""
-    timeout: Optional[int] = SQL_TIMEOUT
+    timeout: int = Field(default=SQL_TIMEOUT, ge=1, le=MAX_TIMEOUT)
 
 class TestCaseResult(BaseModel):
     test_case_id: int
@@ -40,43 +82,49 @@ class JudgeResponse(BaseModel):
     execution_status: str
     score: int
     details: List[TestCaseResult]
+    # 仅当执行状态为 ERROR 时可能携带原因（如建表语句失败），便于上层定位问题
+    error_message: Optional[str] = None
 
-def parse_output_string(s: str) -> Dict:
+
+# 结果集字典：{"columns": [列名...], "rows": [数据行...]}，供解析/比较/格式化统一使用
+ResultSet = Dict[str, Any]
+
+# 连接层错误（连接中断、连接已关闭等）：向上抛，由调用方统一返回 ERROR，而非计入用例失败。
+# 注意：QueryCanceled 是 OperationalError 的子类，捕获时需先于本元组判断。
+_CONNECTION_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
+
+
+def parse_output_string(s: str) -> Dict[str, Any]:
     """
-    将 "col1|col2\nval1|val2" 格式的字符串解析为结果集字典
-    格式与 format_result_set 的输出完全对应
+    将 "col1|col2\nval1|val2" 格式的字符串解析为结果集字典。
+    格式与 format_result_set 的输出完全对应。
     """
     if not s or not s.strip():
         return {"columns": [], "rows": []}
-    lines = s.strip().splitlines()
-    lines = [line.rstrip('\r') for line in lines]
+
+    lines = [line.rstrip("\r") for line in s.strip().splitlines()]
     if not lines:
         return {"columns": [], "rows": []}
-    columns = lines[0].split('|')
-    rows = []
-    for line in lines[1:]:
-        values = line.split('|')
-        rows.append(values)
+
+    columns = lines[0].split("|")
+    rows = [line.split("|") for line in lines[1:]]
     return {"columns": columns, "rows": rows}
 
 
-def compare_result_sets(actual: Dict, expected: Dict) -> bool:
+def compare_result_sets(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
     """
-    比较两个结果集字典，忽略列顺序、行顺序，保留重复行
+    比较两个结果集字典，忽略列顺序、行顺序，保留重复行。
     """
     actual_cols = actual.get("columns", [])
     actual_rows = actual.get("rows", [])
     expected_cols = expected.get("columns", [])
     expected_rows = expected.get("rows", [])
 
-    # 都是空结果集
+    # 两个结果集都为空（例如 INSERT/UPDATE 等无返回值语句）
     if not actual_cols and not expected_cols:
         return True
 
-    if len(actual_cols) != len(expected_cols):
-        return False
-
-    if set(actual_cols) != set(expected_cols):
+    if len(actual_cols) != len(expected_cols) or set(actual_cols) != set(expected_cols):
         return False
 
     try:
@@ -84,71 +132,273 @@ def compare_result_sets(actual: Dict, expected: Dict) -> bool:
     except ValueError:
         return False
 
-    def process_row(row):
-        return tuple(str(v) if v is not None else "" for v in row)
+    def process_row(row) -> tuple:
+        return tuple("" if v is None else str(v) for v in row)
 
     actual_processed = [process_row(row) for row in actual_rows]
-    expected_processed = []
-    for row in expected_rows:
-        mapped_row = tuple(row[i] for i in col_index)
-        expected_processed.append(process_row(mapped_row))
+    expected_processed = [
+        process_row(tuple(row[i] for i in col_index)) for row in expected_rows
+    ]
 
-    return sorted(actual_processed) == sorted(expected_processed)
-
-
-def wait_for_db(container, timeout=CONTAINER_TIMEOUT):
-    """等待容器启动并返回 (host, port)"""
-    start = time.time()
-    while time.time() - start < timeout:
-        container.reload()
-        ports = container.attrs['NetworkSettings']['Ports']
-        host_port = None
-        for container_port, host_bindings in ports.items():
-            if container_port == '5432/tcp' and host_bindings:
-                host_port = host_bindings[0]['HostPort']
-                break
-        if not host_port:
-            time.sleep(0.5)
-            continue
-        try:
-            conn = psycopg2.connect(
-                host='127.0.0.1', port=host_port, database=DB_NAME,
-                user=DB_USER, password=DB_PASSWORD, connect_timeout=2
-            )
-            conn.close()
-            return '127.0.0.1', host_port
-        except Exception:
-            time.sleep(0.5)
-    raise TimeoutError("PostgreSQL 容器启动超时")
+    # 使用 Counter 比较多重集：保留重复行，且为 O(n)
+    return Counter(actual_processed) == Counter(expected_processed)
 
 
-def run_sql_on_container(host, port, sql, timeout):
-    """在容器中执行 SQL，支持多条（分号分隔），返回最后一条查询的结果集字典"""
-    conn = psycopg2.connect(
+def _split_statements(sql: Optional[str]) -> List[str]:
+    """按分号拆分多条 SQL，忽略空语句与空白。"""
+    return [stmt.strip() for stmt in (sql or "").split(";") if stmt.strip()]
+
+
+def _connect(host: str, port: int, timeout: int):
+    """创建到判题数据库的 psycopg2 连接。"""
+    return psycopg2.connect(
         host=host, port=port, database=DB_NAME,
-        user=DB_USER, password=DB_PASSWORD, connect_timeout=timeout
+        user=DB_USER, password=DB_PASSWORD, connect_timeout=timeout,
     )
-    conn.autocommit = True
-    cur = conn.cursor()
+
+
+class PoolExhaustedError(RuntimeError):
+    """连接池在等待超时后仍无可用连接（服务过载，可稍后重试）。"""
+
+
+def _acquire_connection(timeout: int = POOL_ACQUIRE_TIMEOUT):
+    """从连接池获取连接；池耗尽时有限等待空闲连接，而不是立即失败。
+
+    ``ThreadedConnectionPool.getconn`` 在达到 maxconn 时直接抛 ``PoolError`` 而非阻塞，
+    高并发下会造成大量瞬时失败。这里改为短暂轮询，把「立即失败」变成「有限等待」，
+    从而提升并发承载力；等待超过 ``timeout`` 仍未获取到连接则抛 ``PoolExhaustedError``。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return db_pool.getconn()
+        except PoolError:
+            if time.monotonic() >= deadline:
+                raise PoolExhaustedError(
+                    f"连接池繁忙，等待 {timeout}s 仍无空闲连接"
+                ) from None
+            time.sleep(POLL_ACQUIRE_INTERVAL)
+
+
+def _fetch_result_set(cur) -> ResultSet:
+    """读取当前游标的查询结果；无结果集（如 INSERT/UPDATE）时返回空结果集。
+
+    统一 columns/rows 结构，供用例执行与多语句执行复用。
+    """
+    if not cur.description:
+        return {"columns": [], "rows": []}
+    return {
+        "columns": [desc[0] for desc in cur.description],
+        "rows": cur.fetchall(),
+    }
+
+
+def _execute_statements(cur, statements: List[str]) -> Optional[ResultSet]:
+    """顺序执行多条 SQL，返回最后一条带结果集语句的结果（无则返回 None）。"""
+    last_result: Optional[ResultSet] = None
+    for stmt in statements:
+        cur.execute(stmt)
+        if cur.description:
+            last_result = _fetch_result_set(cur)
+    return last_result
+
+
+@contextmanager
+def _interruptible_wait() -> Iterator[threading.Event]:
+    """等待就绪期间临时接管中断信号，让同步阻塞的启动流程能被 Ctrl+C 立即打断。
+
+    uvicorn 在启动前会用「仅设置退出标志」的处理函数替换 SIGINT/SIGTERM（见其
+    ``Server.capture_signals``），因此 ``wait_for_db`` 既收不到 ``KeyboardInterrupt``，
+    又因同步阻塞占用了事件循环而无法响应退出标志，导致 Ctrl+C 看似无效。
+
+    这里在等待期间临时包装信号处理：信号到来时先置位本地事件（让等待循环立刻结束），
+    再链式调用原处理函数（保留 uvicorn 的优雅退出语义）；等待结束后恢复原处理函数。
+
+    信号只能在主线程注册，故仅在主线程生效，其余情况退化为「仅按超时结束」。
+    """
+    stop = threading.Event()
+    if threading.current_thread() is not threading.main_thread():
+        yield stop
+        return
+
+    signals = [signal.SIGINT]
+    sigbreak = getattr(signal, "SIGBREAK", None)  # Windows 下的 Ctrl+Break
+    if sigbreak is not None:
+        signals.append(sigbreak)
+
+    previous = {sig: signal.getsignal(sig) for sig in signals}
+
+    def _handle(signum, frame):
+        stop.set()  # 先置位，让等待循环立刻结束
+        handler = previous.get(signum)
+        if callable(handler):
+            handler(signum, frame)  # 链式调用原处理函数（如 uvicorn 的 handle_exit）
+
     try:
-        cur.execute(f"SET statement_timeout = {timeout * 1000};")
-        statements = [s.strip() for s in sql.split(';') if s.strip()]
-        last_result = None
-        for stmt in statements:
-            cur.execute(stmt)
-            if cur.description:
-                rows = cur.fetchall()
-                columns = [desc[0] for desc in cur.description]
-                last_result = {"columns": columns, "rows": rows}
-            else:
-                last_result = {"columns": [], "rows": [], "message": "SQL executed successfully"}
-        return last_result if last_result is not None else {"columns": [], "rows": []}
+        for sig in signals:
+            signal.signal(sig, _handle)
+        yield stop
     finally:
-        cur.close()
-        conn.close()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
-def format_result_set(result: Dict) -> str:
+def wait_for_db(host: str, port: int, timeout: int = DB_READY_TIMEOUT) -> None:
+    """轮询等待判题数据库可连接（容器由 docker-compose 负责创建）。
+
+    - 每轮在剩余时间内用 ``DB_CONNECT_TIMEOUT`` 建立一次连接，成功即关闭并返回；
+    - 失败按 ``POLL_INTERVAL`` 重试，休眠与连接超时都不超过剩余时间，避免总耗时超出 ``timeout``；
+    - 等待期间可被 Ctrl+C 立即中断（见 ``_interruptible_wait``）；
+    - 超过 ``timeout`` 仍不可用则抛出 ``TimeoutError``，并带上尝试次数与最后一次错误。
+    """
+    logger.info("等待判题数据库 %s:%s 就绪（最长 %ss，可按 Ctrl+C 取消）", host, port, timeout)
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    last_err: Optional[BaseException] = None
+
+    with _interruptible_wait() as interrupted:
+        while True:
+            if interrupted.is_set():
+                logger.warning("等待判题数据库就绪被用户中断")
+                raise KeyboardInterrupt("等待判题数据库就绪时被中断")
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+
+            attempts += 1
+            # libpq 的 connect_timeout 为整数秒且最小为 1，同时不超过剩余时间
+            connect_timeout = max(1, min(DB_CONNECT_TIMEOUT, int(remaining)))
+            try:
+                # closing 保证连接一旦建立就被关闭，避免异常路径泄漏连接
+                with closing(_connect(host, port, connect_timeout)):
+                    pass
+            except psycopg2.Error as exc:
+                last_err = exc
+                logger.debug("判题数据库尚未就绪（第 %s 次尝试）：%s", attempts, exc)
+                # 用 Event.wait 代替 sleep：中断事件已置位时立即返回；休眠同样不超出剩余时间
+                interrupted.wait(
+                    min(POLL_INTERVAL, max(0.0, deadline - time.monotonic()))
+                )
+            else:
+                elapsed = timeout - max(0.0, deadline - time.monotonic())
+                logger.info("判题数据库 %s:%s 已就绪（用时 %.1fs，尝试 %s 次）",
+                            host, port, elapsed, attempts)
+                return
+
+    raise TimeoutError(
+        f"判题数据库连接超时（{timeout}s，尝试 {attempts} 次）: {last_err}"
+    )
+
+
+def _execute_case(cur, submitted_sql: str, idx: int, tc: TestCase) -> TestCaseResult:
+    """在当前连接/事务内执行单个用例并比对结果（无需 SAVEPOINT）。
+
+    每个用例使用独立连接与独立 schema，事务结束整体回滚，天然隔离；
+    - SQL 层错误（语法、超时等）只影响当前用例；
+    - 连接层错误向上抛，由调用方统一返回 ERROR。
+    """
+    try:
+        _execute_statements(cur, _split_statements(tc.test_input))
+        cur.execute(submitted_sql)
+        result_dict = _fetch_result_set(cur)
+        passed = compare_result_sets(result_dict, parse_output_string(tc.expected_output))
+        return TestCaseResult(
+            test_case_id=idx,
+            passed=passed,
+            actual_output=format_result_set(result_dict),
+            error_message=None,
+        )
+    except QueryCanceled:
+        # QueryCanceled 是 OperationalError 的子类，需先于连接层错误捕获
+        return TestCaseResult(
+            test_case_id=idx, passed=False, actual_output="", error_message="SQL执行超时",
+        )
+    except _CONNECTION_ERRORS:
+        raise  # 连接层错误：交给调用方统一返回 ERROR
+    except psycopg2.Error as exc:
+        logger.exception("测试用例 %s 执行失败", idx)
+        return TestCaseResult(
+            test_case_id=idx, passed=False, actual_output="", error_message=str(exc),
+        )
+
+
+def _run_single_case(
+    request: JudgeRequest, idx: int, tc: TestCase
+) -> Tuple[Optional[TestCaseResult], Optional[str]]:
+    """在独立连接 + 独立临时 schema 中执行单个用例，结束后整体回滚清空。
+
+    独立 schema/连接使各用例可安全并行，且回滚即清理（即使进程崩溃也不会残留数据）。
+    返回 ``(result, setup_error)``：建表阶段出错时返回 ``(None, 错误信息)``。
+    """
+    schema = sql.Identifier(f"judge_{uuid4().hex[:12]}")
+    conn = _acquire_connection()
+    result: Optional[TestCaseResult] = None
+    setup_error: Optional[str] = None
+    try:
+        conn.autocommit = False
+        try:
+            with conn.cursor() as cur:
+                # SET LOCAL 仅作用于当前事务，回滚后自动失效，不会污染连接池中复用的连接
+                cur.execute(f"SET LOCAL statement_timeout = {int(request.timeout) * 1000}")
+                cur.execute(sql.SQL("CREATE SCHEMA {}").format(schema))
+                # search_path 只指向本用例的 schema，未限定名称的建表/查询不会落到 public
+                cur.execute(sql.SQL("SET LOCAL search_path = {}").format(schema))
+                try:
+                    _execute_statements(cur, _split_statements(request.create_table_sql))
+                except QueryCanceled:
+                    setup_error = "建表语句执行超时"
+                except _CONNECTION_ERRORS:
+                    raise  # 连接层错误：交给调用方统一返回 ERROR
+                except psycopg2.Error as exc:
+                    setup_error = f"建表语句执行失败: {exc}"
+                if setup_error is None:
+                    result = _execute_case(cur, request.submitted_sql, idx, tc)
+        finally:
+            conn.rollback()  # 撤销 CREATE SCHEMA + 建表 + 数据，连接可干净复用
+    except Exception:
+        # 连接/事务异常：关闭该连接换新，避免把坏连接放回池中
+        try:
+            db_pool.putconn(conn, close=True)
+        except Exception:
+            logger.exception("关闭异常连接失败")
+        raise
+    else:
+        db_pool.putconn(conn)
+    return result, setup_error
+
+
+def _run_judge_in_schema(request: JudgeRequest) -> Tuple[List[TestCaseResult], Optional[str]]:
+    """每个用例在独立连接 + 独立临时 schema 中执行，可按 ``CASE_CONCURRENCY`` 并行。
+
+    返回 (details, fatal_error)：
+    - 建表等导致所有用例都无法执行的 SQL 层错误，作为 fatal_error 返回；
+    - 连接/进程层错误向上抛，由调用方统一返回 ERROR。
+    """
+    cases = list(enumerate(request.test_cases))
+    workers = min(CASE_CONCURRENCY, len(cases))
+    if workers > 1:
+        # 用例间相互独立（各用各的 schema/连接），并行执行以降低整体响应时间
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="judge-case") as pool:
+            outcomes = list(pool.map(lambda item: _run_single_case(request, *item), cases))
+    else:
+        outcomes = [_run_single_case(request, idx, tc) for idx, tc in cases]
+
+    # create_table_sql 对全部用例一致：若全部在建表阶段失败，视为致命错误
+    if all(setup_error is not None for _, setup_error in outcomes):
+        return [], outcomes[0][1]
+
+    details: List[TestCaseResult] = []
+    for (idx, _tc), (result, setup_error) in zip(cases, outcomes):
+        if result is None:  # 个别用例建表失败（非全局）：按失败用例返回
+            result = TestCaseResult(
+                test_case_id=idx, passed=False, actual_output="", error_message=setup_error,
+            )
+        details.append(result)
+    return details, None
+
+
+def format_result_set(result: ResultSet) -> str:
     """将结果集字典格式化为字符串，便于展示"""
     columns = result.get("columns", [])
     rows = result.get("rows", [])
@@ -162,133 +412,44 @@ def format_result_set(result: Dict) -> str:
     return "\n".join(lines)
 
 
-def create_judge_container():
-    container = docker_client.containers.run(
-        DOCKER_IMAGE,
-        environment={
-            "POSTGRES_DB": DB_NAME,
-            "POSTGRES_USER": DB_USER,
-            "POSTGRES_PASSWORD": DB_PASSWORD
-        },
-        ports={'5432/tcp': None},   # 随机映射宿主机端口
-        detach=True,
-        remove=True,
-        tmpfs={
-            "/var/lib/postgresql/data": "rw,noexec,nosuid,size=256m",
-            "/var/run/postgresql": "rw,noexec,nosuid,size=16m",
-            "/tmp": "rw,noexec,nosuid,size=64m",
-            "/dev/shm": "rw,noexec,nosuid,size=64m"
-        },
-        mem_limit=MEM_LIMIT,
-        cpu_period=100000,
-        cpu_quota=50000,
-        cap_add=["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE"],
-        cap_drop=["SYS_ADMIN", "NET_RAW", "SYS_MODULE", "AUDIT_WRITE", "MKNOD"],
-        security_opt=["no-new-privileges:true"]
+def _error_response(error_message: Optional[str] = None) -> JudgeResponse:
+    """构造统一的判题错误响应。"""
+    return JudgeResponse(
+        passed=False,
+        execution_status="ERROR",
+        score=0,
+        details=[],
+        error_message=error_message,
     )
-    return container
 
 
 @app.post("/judge", response_model=JudgeResponse)
-async def judge(request: JudgeRequest):
-    container = None
+def judge(request: JudgeRequest) -> JudgeResponse:
+    # 同步 def：内部为阻塞式 I/O（psycopg2），由 FastAPI 放入线程池运行，避免阻塞事件循环
     try:
-        container = create_judge_container()
-        host, port = wait_for_db(container)
-
-        if request.create_table_sql and request.create_table_sql.strip():
-            run_sql_on_container(host, port, request.create_table_sql, request.timeout)
-
-        details = []
-        passed_count = 0
-
-        for idx, tc in enumerate(request.test_cases):
-            try:
-                with closing(psycopg2.connect(
-                    host=host, port=port, database=DB_NAME,
-                    user=DB_USER, password=DB_PASSWORD,
-                    connect_timeout=request.timeout
-                )) as conn:
-                    conn.autocommit = False
-                    with conn.cursor() as cur:
-                        cur.execute(f"SET statement_timeout = {request.timeout * 1000};")
-
-                        if tc.test_input and tc.test_input.strip():
-                            for stmt in [s.strip() for s in tc.test_input.split(';') if s.strip()]:
-                                cur.execute(stmt)
-                        cur.execute(request.submitted_sql)
-                        if cur.description:
-                            rows = cur.fetchall()
-                            columns = [desc[0] for desc in cur.description]
-                            result_dict = {"columns": columns, "rows": rows}
-                        else:
-                            result_dict = {"columns": [], "rows": []}
-                        conn.rollback()
-
-                        # 新方式：智能结果集比较
-                        expected_result = parse_output_string(tc.expected_output)
-                        is_pass = compare_result_sets(result_dict, expected_result)
-
-                        actual_output = format_result_set(result_dict)
-                        if is_pass:
-                            passed_count += 1
-
-                        details.append(TestCaseResult(
-                            test_case_id=idx,
-                            passed=is_pass,
-                            actual_output=actual_output
-                        ))
-
-            except QueryCanceled:
-                details.append(TestCaseResult(
-                    test_case_id=idx,
-                    passed=False,
-                    actual_output="",
-                    error_message="SQL执行超时"
-                ))
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                details.append(TestCaseResult(
-                    test_case_id=idx,
-                    passed=False,
-                    actual_output="",
-                    error_message=str(e)
-                ))
+        details, fatal_error = _run_judge_in_schema(request)
+        if fatal_error:
+            # 建表等 SQL 层致命错误：附带原因返回并记录日志，便于上层定位（原先该信息被丢弃）
+            logger.warning("判题未能执行: %s", fatal_error)
+            return _error_response(fatal_error)
 
         total = len(request.test_cases)
-        score = int(passed_count / total * 100) if total > 0 else 0
-        all_passed = (passed_count == total)
+        passed_count = sum(d.passed for d in details)
+        all_passed = passed_count == total
 
         return JudgeResponse(
             passed=all_passed,
             execution_status="ACCEPTED" if all_passed else "WRONG_ANSWER",
-            score=score,
-            details=details
+            score=passed_count * 100 // total,
+            details=details,
         )
-
-    except TimeoutError:
-        return JudgeResponse(
-            passed=False,
-            execution_status="TIMEOUT",
-            score=0,
-            details=[]
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JudgeResponse(
-            passed=False,
-            execution_status="ERROR",
-            score=0,
-            details=[]
-        )
-    finally:
-        if container:
-            try:
-                container.stop()
-            except:
-                pass
+    except PoolExhaustedError as exc:
+        # 连接池过载：返回可重试的繁忙状态，避免把瞬时高并发当作崩溃
+        logger.warning("判题服务繁忙: %s", exc)
+        return _error_response(str(exc))
+    except Exception:
+        logger.exception("判题失败")
+        return _error_response()
 
 
 @app.get("/health")

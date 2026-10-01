@@ -6,8 +6,8 @@
 ## 1. 服务概述
 
 SQL 判题服务是一个独立的微服务，负责安全执行学生提交的 SQL 语句，与预期输出进行比对，并返回判题结果。  
-服务基于 FastAPI 开发，使用 Docker 动态创建临时的 PostgreSQL 容器作为沙箱环境，执行完毕后自动销毁容器。  
-技术栈：FastAPI + Docker + PostgreSQL  
+服务基于 FastAPI 开发，使用 docker-compose 常驻一个 PostgreSQL 容器，判题时按请求创建独立 schema 隔离执行。  
+技术栈：FastAPI + Docker Compose + PostgreSQL  
 默认端口：8080  
 通信协议：HTTP + JSON
 
@@ -18,7 +18,7 @@ SQL 判题服务是一个独立的微服务，负责安全执行学生提交的 
 ### 2.1 环境要求
 
 Python 3.10 或更高版本  
-Docker Desktop（或 Docker Engine）已安装并运行  
+Docker Desktop（或 Docker Engine）与 Docker Compose 已安装并运行  
 端口 8080 未被占用
 
 ### 2.2 安装依赖
@@ -32,19 +32,27 @@ pip install -r requirements_judge.txt
 ```
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
-docker==7.1.0
 psycopg2-binary==2.9.10
 pydantic==2.9.0
 requests==2.32.3
+python-dotenv==1.2.2
 ```
 
 ### 2.3 启动命令
 
+先创建并启动判题数据库容器（复用）：
+
 ```bash
-python judge_service.py
+docker compose up -d
 ```
 
-或使用提供的批处理文件（Windows）：
+再启动判题服务：
+
+```bash
+python judge_service_new.py
+```
+
+或直接使用提供的批处理文件（Windows，会自动执行上述两步）：
 
 ```bash
 start_judge.bat
@@ -58,6 +66,30 @@ INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8080
 ```
+
+### 2.4 配置说明（judge_service/.env）
+
+判题服务的数据库等配置统一从配置文件 `judge_service/.env` 读取，由 `judge_config.py` 负责加载：
+
+- 默认读取与脚本同目录的 `.env`，可复制 `.env.example` 得到；
+- `docker compose` 也会自动读取 `judge_service/.env`，容器与判题服务共用同一套配置，无需重复填写；
+- 优先级：真实环境变量 > `.env` 配置文件 > 代码内置默认值；
+- 可用环境变量 `JUDGE_CONFIG_FILE` 指定其他配置文件路径。
+
+`.env` 支持的配置项：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `JUDGE_DB_HOST` | 判题数据库主机 | `127.0.0.1` |
+| `JUDGE_DB_PORT` | 判题数据库端口（与 docker-compose 映射一致） | `5433` |
+| `JUDGE_DB_NAME` | 判题数据库名 | `judge_db` |
+| `JUDGE_DB_USER` | 判题数据库账号 | `judge_user` |
+| `JUDGE_DB_PASSWORD` | 判题数据库密码 | `judge_pass` |
+| `JUDGE_DB_READY_TIMEOUT` | 启动时等待数据库可连接的秒数 | `60` |
+| `JUDGE_DB_POOL_MAX` | 连接池最大连接数（并发承载上限） | `20` |
+| `JUDGE_DB_POOL_MIN` | 常驻（预热）连接数，默认与最大连接数一致，避免反复建连 | `20` |
+| `JUDGE_CASE_CONCURRENCY` | 单个请求内测试用例的并行度（>1 时并行执行） | `4` |
+| `JUDGE_POOL_ACQUIRE_TIMEOUT` | 连接池耗尽时等待空闲连接的最长秒数 | `10` |
 
 ---
 
@@ -127,9 +159,10 @@ INFO:     Uvicorn running on http://0.0.0.0:8080
 | 字段 | 类型 | 描述 |
 |------|------|------|
 | `passed` | boolean | 所有测试用例是否全部通过 |
-| `execution_status` | string | 判题状态：`ACCEPTED` / `WRONG_ANSWER` / `TIMEOUT` / `ERROR` |
+| `execution_status` | string | 判题状态：`ACCEPTED` / `WRONG_ANSWER` / `ERROR` |
 | `score` | integer | 得分（0-100），等于通过用例数 / 总用例数 × 100 |
 | `details` | array | 每个测试用例的详细结果 |
+| `error_message` | string | 仅在 `execution_status` 为 `ERROR` 时可能携带错误原因（如建表语句失败），否则为 `null` |
 
 **`details` 数组元素**：
 
@@ -188,14 +221,23 @@ INFO:     Uvicorn running on http://0.0.0.0:8080
 }
 ```
 
-#### 响应示例（超时）
+#### 响应示例（SQL 超时）
+
+SQL 执行超时会作为对应测试用例的 `error_message` 返回（`passed=false`），整体状态为 `WRONG_ANSWER`：
 
 ```json
 {
   "passed": false,
-  "execution_status": "TIMEOUT",
+  "execution_status": "WRONG_ANSWER",
   "score": 0,
-  "details": []
+  "details": [
+    {
+      "test_case_id": 0,
+      "passed": false,
+      "actual_output": "",
+      "error_message": "SQL执行超时"
+    }
+  ]
 }
 ```
 
@@ -256,36 +298,36 @@ Charlie|22
 | `execution_status` | 含义 |
 |--------------------|------|
 | `ACCEPTED` | 所有测试用例通过 |
-| `WRONG_ANSWER` | 至少有一个测试用例未通过（结果不匹配或执行错误） |
-| `TIMEOUT` | 容器启动超时或 SQL 执行超过设定时间 |
-| `ERROR` | 服务内部异常（如 Docker 未运行、网络问题等） |
+| `WRONG_ANSWER` | 至少有一个测试用例未通过（结果不匹配、执行错误或超时） |
+| `ERROR` | 服务内部异常（如数据库容器未运行、网络问题等） |
 
 ---
 
 ## 6. 安全机制
 
-1. **容器隔离**：每次判题启动一个全新的 PostgreSQL 临时容器，判题结束后立即销毁。
-2. **资源限制**：每个容器内存限制 `512MB`，CPU 配额限制（避免无限循环）。
-3. **只读文件系统（部分）**：通过 `tmpfs` 挂载可写目录，根文件系统不可写（移除 `read_only` 后仍保留关键限制）。
+1. **schema 隔离**：判题复用常驻容器，每个测试用例使用独立的临时 schema，请求结束整体回滚清空，请求/用例间互不干扰。
+2. **权限收敛**：容器初始化脚本把判题账号降为非超管角色，并将 `public` schema 所有权转移，防止越权访问/删除。
+3. **资源限制**：容器内存限制 `512MB`、CPU 配额、`pids_limit` 进程数限制（避免无限循环/fork 炸弹）。
 4. **能力裁剪**：容器只保留必要的 Linux Capabilities，丢弃 `SYS_ADMIN`、`NET_RAW` 等高危权限。
 5. **SQL 超时**：通过 PostgreSQL 的 `statement_timeout` 参数强制中断长时间运行的查询。
-6. **事务回滚**：每个测试用例在独立的数据库会话中执行，结束后回滚，确保用例间数据隔离。
+6. **事务回滚**：每个测试用例在独立连接与独立临时 schema 中执行，结束后整体回滚（回滚即清理），确保用例间数据隔离且不残留。
 
 ---
 
 ## 7. 注意事项
 
-- **判题服务必须与 Docker 运行在同一主机上**，因为代码通过 Docker SDK 创建容器。
-- 判题服务**本身不需要数据库**，它动态创建临时数据库实例。
+- **判题服务与判题数据库容器需在同一主机上**：先通过 `docker compose up -d` 启动容器，再启动判题服务。
+- 判题服务通过固定端口（默认 `5433`）连接常驻的 PostgreSQL 容器，可用 `JUDGE_DB_PORT` 等环境变量覆盖。
 - 如果业务后端与判题服务不在同一台机器，需修改 `judge.py` 中的 `JUDGE_SERVICE_URL` 为实际地址（默认 `http://localhost:8080/judge`）。
-- 由于每次判题都会启动一个新容器，**并发判题时可能有一定延迟**（约 2~3 秒/次），建议业务层控制并发量或使用容器池优化。
+- 容器复用时并发量受连接池（`JUDGE_DB_POOL_MAX`）与数据库自身限制：连接不足时请求会等待空闲连接（最长 `JUDGE_POOL_ACQUIRE_TIMEOUT` 秒），超时返回 `ERROR`（服务繁忙）。
+- 单个请求内的多个测试用例默认并行执行（`JUDGE_CASE_CONCURRENCY`），可降低多用例请求的整体响应时间；连接池与并行度需按数据库承载能力调优。
 - 多条 SQL 语句用分号 `;` 分隔，但**不支持 SQL 字符串内部包含分号**（极少数情况），如有需要请将复杂语句合并为单条或使用存储过程。
 
 ---
 
 ## 8. 集成到业务后端
 
-业务后端（Django）只需调用 `judge.py` 中的 `judge_submission` 函数即可：
+业务后端（Django）通过 `apps/submissions/judge.py` 的 `judge_submission` 调用判题服务：
 
 ```python
 from apps.submissions.judge import judge_submission
@@ -299,14 +341,41 @@ result = judge_submission(
 )
 ```
 
-该函数会同步等待判题结果，并返回与上述 API 响应一致的字典。
+该函数会**同步**等待判题结果并返回与上述 API 响应一致的字典（适合脚本或离线判题）。
+
+### 8.1 异步判题（Web 请求推荐）
+
+为避免判题阻塞 Django 请求 worker，提交接口已改为**异步**：先落库一条
+`execution_status='PENDING'` 的提交记录，再交给 `apps/submissions/judging.py` 的
+后台线程判题，接口立即返回 **202**，由客户端轮询提交状态直到出结果。
+
+```python
+from apps.submissions.judging import enqueue_judge, JudgeQueueFull, PENDING
+
+submission = Submission.objects.create(..., execution_status=PENDING, score=0)
+try:
+    enqueue_judge(submission.id)
+except JudgeQueueFull:
+    ...  # 队列已满，返回 503（服务繁忙）
+```
+
+要点：
+
+- `POST /api/submissions/submit/` 与 `POST /api/exams/{id}/submit/` 均返回 **202**，响应中提交记录状态为 `PENDING`；
+- 客户端轮询 `GET /api/submissions/{id}/`，当 `execution_status` 不再是 `PENDING`（即 `ACCEPTED`/`WRONG_ANSWER`/`ERROR`/`TIMEOUT`）时为最终结果；
+- 后台线程数与队列上限可用环境变量 `JUDGE_WORKERS`（默认 4）、`JUDGE_QUEUE_SIZE`（默认 200）调整；队列满时接口返回 **503**；
+- 判题在进程内执行，进程重启会丢失队列中的任务；重启后可执行 `python manage.py requeue_pending` 重新入队仍为 `PENDING` 的提交；
+- 考试提交的得分由后台按该题在考试中的分值换算（`ACCEPTED` 得满分，否则 0），与单题提交（0–100 分）区别处理。
 
 ---
 
 ## 9. 常见问题
 
-**Q：判题服务启动后提示 `docker.errors.DockerException`？**  
-A：请确保 Docker Desktop 已启动，且当前用户有权限访问 Docker 守护进程。
+**Q：判题服务启动后提示数据库连接失败？**  
+A：请先执行 `docker compose up -d` 启动判题数据库容器，并确认端口 `5433` 未被占用。
 
 **Q：判题超时如何调整？**  
 A：在请求体中传递 `timeout` 字段（单位秒），或修改 `SQL_TIMEOUT` 常量后重启服务。
+
+**Q：启动时一直停在“等待判题数据库就绪”，能取消吗？**  
+A：可以。等待期间按 `Ctrl+C` 会立即中断启动并退出，无需等到 `JUDGE_DB_READY_TIMEOUT` 超时。若频繁出现，请确认已执行 `docker compose up -d` 启动判题数据库容器，并检查 `JUDGE_DB_HOST`/`JUDGE_DB_PORT` 等配置。

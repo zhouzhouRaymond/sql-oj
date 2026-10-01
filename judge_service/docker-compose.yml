@@ -1,0 +1,46 @@
+# SQL 判题数据库容器（跨请求复用），由 docker compose 创建与管理。
+# 启动：docker compose up -d     停止/清理：docker compose down
+# 端口、账号等均可通过环境变量覆盖，默认值与 judge_service_new.py 保持一致。
+services:
+  judge-db:
+    image: postgres:15-alpine
+    container_name: sql-oj-judge-db
+    environment:
+      POSTGRES_DB: ${JUDGE_DB_NAME:-judge_db}
+      POSTGRES_USER: ${JUDGE_DB_USER:-judge_user}
+      POSTGRES_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
+    volumes:
+      # 挂载初始化脚本：每次重建（tmpfs）都会执行，完成权限收敛与 public 隔离
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # 固定宿主机端口，判题服务通过 JUDGE_DB_PORT 连接（默认 5433）
+      - "127.0.0.1:${JUDGE_DB_PORT:-5433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=256m
+      - /var/run/postgresql:rw,noexec,nosuid,size=16m
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /dev/shm:rw,noexec,nosuid,size=64m
+    mem_limit: 512m
+    cpu_period: 100000
+    cpu_quota: 50000
+    pids_limit: 64
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    cap_drop:
+      - SYS_ADMIN
+      - NET_RAW
+      - SYS_MODULE
+      - AUDIT_WRITE
+      - MKNOD
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JUDGE_DB_USER:-judge_user} -d ${JUDGE_DB_NAME:-judge_db}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped

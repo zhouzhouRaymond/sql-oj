@@ -6,7 +6,7 @@ from rest_framework.decorators import action
 
 from .models import Submission
 from .serializers import SubmissionSerializer
-from .judge import judge_submission
+from .judging import JudgeQueueFull, PENDING, enqueue_judge
 from apps.questions.models import Question
 from apps.exams.models import Exam
 from apps.users.models import User
@@ -28,8 +28,11 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         if self.request.user.user_type == 'student':
             qs = qs.filter(student=self.request.user)
         elif self.request.user.user_type == 'teacher':
-            # 教师可以看到所有学生的提交记录
-            qs = qs.filter(student__user_type='student')
+            # 教师可以看到所有学生的提交记录，也能看到自己产生的提交
+            # （例如教师在题目页试用提交，提交后需能轮询到该条记录，否则会 404）
+            qs = qs.filter(
+                Q(student__user_type='student') | Q(student=self.request.user)
+            )
         return qs
 
     @action(detail=False, methods=['post'])
@@ -58,36 +61,34 @@ class SubmissionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # 获取题目和测试用例
+        # 获取题目
         try:
-            question = Question.objects.prefetch_related('test_cases').get(id=question_id)
+            question = Question.objects.get(id=question_id)
         except Question.DoesNotExist:
             return Response({'error': '题目不存在'}, status=status.HTTP_404_NOT_FOUND)
 
-        test_cases = list(
-            question.test_cases.values('test_input', 'expected_output')
-        )
-
-        # 调用判题服务
-        result = judge_submission(
-            submitted_sql,
-            test_cases,
-            question.create_table_sql or ''
-        )
-
-        # 保存提交记录
+        # 先落库为待判题，再交给后台线程判题，请求线程立即返回而不被阻塞
         submission = Submission.objects.create(
             student=request.user,
             question=question,
             exam_id=exam_id,
             submitted_sql=submitted_sql,
-            execution_status=result.get('execution_status', ''),
-            score=result.get('score', 0),
+            execution_status=PENDING,
+            score=0,
         )
+        try:
+            enqueue_judge(submission.id)
+        except JudgeQueueFull:
+            submission.execution_status = 'ERROR'
+            submission.save(update_fields=['execution_status'])
+            return Response(
+                {'error': '判题服务繁忙，请稍后重试', 'submission_id': submission.id},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             SubmissionSerializer(submission).data,
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_202_ACCEPTED
         )
 
 

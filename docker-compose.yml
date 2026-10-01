@@ -1,0 +1,131 @@
+# SQL Online Judge 一键编排
+#   服务：MySQL（业务库）+ PostgreSQL（判题库）+ 判题服务 + 后端 + 前端
+#   启动：docker compose up -d --build
+#   停止：docker compose down        （清理数据卷：docker compose down -v）
+#   访问：前端 http://localhost:8090    后端 API http://localhost:8000/api/
+#
+# 可选的变量覆盖放在根目录 .env（由 compose 自动加载，示例见 .env.example）。
+name: sql-oj
+
+services:
+  # ---------- 业务数据库（MySQL） ----------
+  mysql:
+    # 注意：Django 6.x 要求 MySQL 8.4 及以上，因此使用 8.4 镜像
+    image: mysql:8.4
+    container_name: sql-oj-mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sql_oj}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sql_oj_db}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------- 判题数据库（PostgreSQL，容器重建即重置，权限收敛见 initdb） ----------
+  judge-db:
+    image: postgres:15-alpine
+    container_name: sql-oj-judge-db
+    environment:
+      POSTGRES_DB: ${JUDGE_DB_NAME:-judge_db}
+      POSTGRES_USER: ${JUDGE_DB_USER:-judge_user}
+      POSTGRES_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
+    volumes:
+      # 挂载初始化脚本：每次重建（tmpfs）都会执行，完成权限收敛与 public 隔离
+      - ./judge_service/initdb:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=256m
+      - /var/run/postgresql:rw,noexec,nosuid,size=16m
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /dev/shm:rw,noexec,nosuid,size=64m
+    mem_limit: 512m
+    cpu_period: 100000
+    cpu_quota: 50000
+    pids_limit: 64
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    cap_drop:
+      - SYS_ADMIN
+      - NET_RAW
+      - SYS_MODULE
+      - AUDIT_WRITE
+      - MKNOD
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JUDGE_DB_USER:-judge_user} -d ${JUDGE_DB_NAME:-judge_db}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  # ---------- 判题服务（FastAPI，容器内 8080） ----------
+  judge-service:
+    build:
+      context: ./judge_service
+    image: sql-oj-judge-service
+    container_name: sql-oj-judge-service
+    environment:
+      JUDGE_DB_HOST: judge-db
+      JUDGE_DB_PORT: "5432"
+      JUDGE_DB_NAME: ${JUDGE_DB_NAME:-judge_db}
+      JUDGE_DB_USER: ${JUDGE_DB_USER:-judge_user}
+      JUDGE_DB_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
+    depends_on:
+      judge-db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # ---------- 后端（Django + DRF，容器内 8000） ----------
+  backend:
+    build:
+      context: .
+    image: sql-oj-backend
+    container_name: sql-oj-backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sql_oj_db}
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sql_oj}
+      JUDGE_SERVICE_URL: http://judge-service:8080/judge
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: "*"
+      # DJANGO_SECRET_KEY: 生产环境请通过 .env 显式设置
+    depends_on:
+      mysql:
+        condition: service_healthy
+      judge-service:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # ---------- 前端（Nginx 托管构建产物并反代 /api，容器内 80） ----------
+  frontend:
+    build:
+      context: ./sql-oj-frontend
+    image: sql-oj-frontend
+    container_name: sql-oj-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+
+volumes:
+  # 业务数据库数据卷（判题库使用 tmpfs，无需持久化）
+  mysql-data:

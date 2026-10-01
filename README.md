@@ -2,7 +2,7 @@
 
 ## 1 系统概述
 
-SQL Online Judge（SQL OJ）是一个面向数据库课程的在线判题平台，支持学生在线练习 SQL 题目、参加考试，教师管理题库、组织考试并查看统计分析。系统采用前后端分离架构，判题引擎基于 Docker 沙箱实现安全隔离执行。
+SQL Online Judge（SQL OJ）是一个面向数据库课程的在线判题平台，支持学生在线练习 SQL 题目、参加考试，教师管理题库、组织考试并查看统计分析。系统采用前后端分离架构，判题引擎基于 Docker（docker-compose）与 schema 隔离实现安全执行。
 
 ### 1.1 功能模块
 
@@ -11,8 +11,11 @@ SQL Online Judge（SQL OJ）是一个面向数据库课程的在线判题平台�
 | 用户管理 | 学生/教师注册登录、JWT 认证、个人信息管理 |
 | 题目管理 | 题目 CRUD、难度分级、建表 SQL、批量导入 |
 | 考试管理 | 创建考试、时间校验、考生范围控制、成绩排名 |
-| 提交判题 | SQL 提交、Docker 沙箱执行、自动评分 |
+| 提交判题 | SQL 提交、Docker 容器执行、schema 隔离、自动评分 |
 | 统计分析 | 通过率统计、学生排名、数据概览 |
+| #todo 班级管理 | 待实现 |
+| #todo 自定义测试用例 | 待实现 |
+| #todo 逐测试用例返回结果 | 待实现 |
 
 ### 1.2 技术栈
 
@@ -32,7 +35,7 @@ SQL Online Judge（SQL OJ）是一个面向数据库课程的在线判题平台�
 | 组件 | 版本 |
 |------|------|
 | FastAPI | 0.115.0 |
-| Docker Engine | 20.10+ |
+| Docker Engine / Docker Compose | 20.10+ |
 | PostgreSQL | 15（容器内） |
 | psycopg2 | 2.9.10 |
 
@@ -146,9 +149,14 @@ cd judge_service
 
 # 安装依赖
 pip install -r requirements_judge.txt
+
+# 创建配置文件（数据库等参数统一从此读取；docker compose 也会自动加载）
+copy .env.example .env
 ```
 
-前置条件：Docker Desktop 已安装并正在运行。
+判题服务的数据库等配置统一存放于 `judge_service/.env`，各配置项含义见 `docs/judge_api_new.md` 第 2.4 节。
+
+前置条件：Docker Desktop（含 Docker Compose）已安装并正在运行。
 
 ### 3.6 前端安装
 
@@ -169,6 +177,11 @@ npm install
 
 ```powershell
 cd judge_service
+
+# 用 docker compose 创建并启动判题数据库容器（复用）
+docker compose up -d
+
+# 启动判题服务
 python judge_service_new.py
 ```
 
@@ -519,11 +532,16 @@ sql_oj/
 │       ├── models.py               # 提交记录模型
 │       ├── serializers.py          # 提交记录序列化器
 │       ├── views.py                # 提交与统计分析
-│       ├── judge.py                # 判题服务调用
+│       ├── judge.py                # 判题服务调用（同步）
+│       ├── judging.py              # 后台异步判题队列（不阻塞请求 worker）
 │       ├── urls.py                 # 提交路由
 │       └── urls_stats.py           # 统计路由
 ├── judge_service/                  # 判题引擎（独立微服务）
 │   ├── judge_service_new.py        # FastAPI 主程序（端口 8080）
+│   ├── judge_config.py             # 配置加载（从 .env 读取数据库等配置）
+│   ├── .env / .env.example         # 配置文件 / 示例（.env 本地创建，不提交）
+│   ├── docker-compose.yml          # 判题数据库容器（复用）
+│   ├── initdb/                     # 容器初始化脚本（权限收敛、public 隔离）
 │   ├── requirements_judge.txt      # 判题服务依赖
 │   └── start_judge.bat             # Windows 启动脚本
 ├── docs/                           # 文档
@@ -576,5 +594,141 @@ A：启动后端后，浏览器访问 `http://127.0.0.1:8000/api/`，DRF 自带�
 
 1. `settings.py` 包含数据库密码，各成员需自行配置，不提交至版本库。
 2. 后端和判题服务需同时运行，否则 SQL 提交功能不可用。
-3. 判题服务依赖 Docker，首次执行判题时会拉取 PostgreSQL 镜像，请确保网络畅通。
+3. 判题服务依赖 Docker，首次运行 docker compose up -d 时会拉取 PostgreSQL 镜像，请确保网络畅通。
 4. 数据模型变更后需执行 `python manage.py makemigrations` 和 `python manage.py migrate`。
+5. 判题服务的数据库等配置统一从 `judge_service/.env` 读取（可复制 `.env.example` 得到），`docker compose` 也会自动加载该文件，从而保证容器与判题服务配置一致。
+
+---
+
+## 11 Docker 容器化部署（一键启动）
+
+除本地手动部署（第 3~4 节）外，本项目提供完整的 Docker 化方案，可用一条命令启动全部服务（MySQL、判题数据库 PostgreSQL、判题服务、后端、前端）。
+
+### 11.1 前置条件
+
+- 已安装 Docker Desktop（含 Docker Compose），且 Docker 服务正在运行。
+- 首次构建与启动需要联网拉取基础镜像（python:3.12-slim、node:20-alpine、nginx:alpine、mysql:8.4、postgres:15-alpine）。
+
+### 11.2 快速开始
+
+```powershell
+# 在项目根目录执行
+docker compose up -d --build
+```
+
+启动完成后访问：
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端页面 | http://localhost:8090 | Nginx 托管前端构建产物 |
+| 后端 API | http://localhost:8000/api/ | Django + DRF（可直接浏览测试） |
+| 判题服务 | http://localhost:8080/health | FastAPI 判题引擎健康检查 |
+
+### 11.3 各服务说明
+
+| 容器 | 镜像/构建 | 端口映射 | 说明 |
+|------|-----------|----------|------|
+| sql-oj-frontend | 由 `sql-oj-frontend/Dockerfile` 构建 | 8090 → 80 | Node 构建产物 + Nginx，反代 `/api`、`/admin` 到后端 |
+| sql-oj-backend | 由根目录 `Dockerfile` 构建 | 8000 → 8000 | 入口脚本等待 MySQL、执行迁移后启动 Django |
+| sql-oj-judge-service | 由 `judge_service/Dockerfile` 构建 | 8080 → 8080 | FastAPI 判题服务 |
+| sql-oj-judge-db | postgres:15-alpine | 仅容器网络 | 判题数据库（tmpfs，容器重建即重置） |
+| sql-oj-mysql | mysql:8.4 | 仅容器网络 | 业务数据库（数据持久化在 mysql-data 卷；Django 6.x 要求 MySQL ≥ 8.4） |
+
+容器间通过服务名互相访问：前端 Nginx → `backend:8000`，后端 → `judge-service:8080`，判题服务 → `judge-db:5432`，后端 → `mysql:3306`。
+
+### 11.4 配置项
+
+镜像中不含任何账号密码，全部通过环境变量注入，可在项目根目录创建 `.env` 覆盖默认值：
+
+```powershell
+copy .env.example .env
+```
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MYSQL_DATABASE` | `sql_oj_db` | 业务数据库名 |
+| `MYSQL_ROOT_PASSWORD` | `sql_oj` | MySQL root 密码（后端同样使用） |
+| `JUDGE_DB_NAME` / `JUDGE_DB_USER` / `JUDGE_DB_PASSWORD` | `judge_db` / `judge_user` / `judge_pass` | 判题数据库 |
+| `DJANGO_SECRET_KEY` | 内置开发密钥 | 生产环境请替换 |
+| `DJANGO_DEBUG` | `True` | 生产环境建议设为 `False` |
+| `DJANGO_ALLOWED_HOSTS` | `*` | 逗号分隔 |
+
+后端支持的连接类环境变量（容器内已自动配置）：`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`JUDGE_SERVICE_URL`。
+
+### 11.5 常用命令
+
+```powershell
+docker compose ps                 # 查看容器状态
+docker compose logs -f backend    # 查看后端日志
+docker compose down               # 停止并移除容器（保留数据卷）
+docker compose down -v            # 停止并删除数据卷（清空 MySQL 数据）
+docker compose up -d --build      # 重新构建并启动
+```
+
+### 11.6 导入预置题目（可选）
+
+容器启动并在前端注册一个教师账号后，执行：
+
+```powershell
+docker compose exec backend python manage.py import_exercises --teacher-id=1
+```
+
+### 11.7 构建产物说明
+
+| 文件 | 作用 |
+|------|------|
+| `docker-compose.yml`（根目录） | 五个服务的编排定义 |
+| `Dockerfile`（根目录） | 后端镜像（Django），含入口脚本 |
+| `entrypoint.sh`（根目录） | 后端容器启动脚本：等待 MySQL → migrate → runserver |
+| `judge_service/Dockerfile` | 判题服务镜像（FastAPI） |
+| `sql-oj-frontend/Dockerfile` | 前端镜像（Node 构建 + Nginx） |
+| `sql-oj-frontend/nginx.conf` | 前端 Nginx 配置（SPA 回退 + API 反代） |
+| `.env.example`（根目录） | compose 环境变量示例 |
+| `.dockerignore`（各处） | 缩小构建上下文 |
+
+---
+
+## 12 ARM64（aarch64）镜像打包与部署
+
+默认构建出的镜像是宿主架构（通常 amd64）。若要部署到 **ARM64 的 Linux 机器**，可用 buildx 交叉构建并导出为离线镜像包。
+
+### 12.1 构建并导出 ARM64 镜像
+
+```powershell
+# 交叉构建三个应用镜像（--platform 指定目标架构，前端会自动用宿主架构跑 Node 构建）
+docker buildx build --platform linux/arm64 --load -t sql-oj-backend .
+docker buildx build --platform linux/arm64 --load -t sql-oj-judge-service ./judge_service
+docker buildx build --platform linux/arm64 --load -t sql-oj-frontend ./sql-oj-frontend
+
+# 导出运行所需镜像（含基础镜像，便于离线重建）
+docker save --platform linux/arm64 -o sql-oj-images-arm64.tar `
+  sql-oj-backend sql-oj-judge-service sql-oj-frontend `
+  mysql:8.4 postgres:15-alpine python:3.12-slim nginx:alpine
+```
+
+> 说明：前端 `Dockerfile` 的构建阶段使用 `FROM --platform=$BUILDPLATFORM node:20-alpine`，
+> 静态资源与 CPU 架构无关，交叉构建时 Node 仍在宿主架构上运行，避免 QEMU 模拟导致构建缓慢。
+
+### 12.2 在 ARM64 机器上部署
+
+```bash
+docker load -i sql-oj-images-arm64.tar
+docker compose up -d        # 镜像已就绪，不会重新构建
+```
+
+验证：
+
+```bash
+docker image inspect sql-oj-backend --format '{{.Os}}/{{.Architecture}}'   # 应输出 linux/arm64
+curl http://localhost:8080/health
+```
+
+### 12.3 说明
+
+- 导出的 tar 中已核对所有镜像的 `architecture` 为 `arm64`（`variant: v8`）。
+- 若目标机器已有外网，也可直接在该机器上执行 `docker compose up -d --build` 自行构建，无需离线包。
+- 离线**重建**镜像还需 `node:20-alpine` 的 arm64 版本（仅构建阶段使用，运行不需要）。
+- 注意：交叉构建会把本机 `sql-oj-backend` 等 tag 指向 arm64 镜像。若要在本机继续以 amd64 运行，
+  执行 `docker compose build` 重新构建一次即可恢复；运行中的容器不受影响。
+
+
