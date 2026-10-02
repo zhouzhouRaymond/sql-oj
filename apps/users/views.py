@@ -1,4 +1,4 @@
-from rest_framework import generics, viewsets, permissions, status
+from rest_framework import filters, generics, viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.token_blacklist.models import (
@@ -6,7 +6,7 @@ from rest_framework_simplejwt.token_blacklist.models import (
 )
 
 from .models import User
-from .serializers import RegisterSerializer, UserSerializer
+from .serializers import RegisterSerializer, UserAdminSerializer, UserSerializer
 from .permissions import IsTeacher, IsOwnerOrTeacher
 from apps.submissions.models import Submission
 from apps.questions.models import Question
@@ -30,31 +30,48 @@ class RegisterView(generics.CreateAPIView):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    """用户管理 ViewSet"""
-    # 固定排序，避免分页时顺序不稳定导致学生列表出现重复/遗漏
+    """用户 / 账号管理 ViewSet"""
+    # 固定排序，避免分页时顺序不稳定导致列表重复/遗漏
     queryset = User.objects.all().order_by('id')
-    serializer_class = UserSerializer
+    serializer_class = UserAdminSerializer
+    # 账号管理页支持关键词搜索（登录名 / 用户名 / 邮箱）
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['username', 'display_name', 'email']
+
+    def get_serializer_class(self):
+        # 自助接口（/users/me/）不允许改角色等敏感字段，避免自行提权
+        if self.action == 'me':
+            return UserSerializer
+        return UserAdminSerializer
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'update', 'partial_update', 'destroy'):
+        # 账号管理相关操作（含新建账号）仅教师可用
+        if self.action in (
+            'list', 'retrieve', 'create', 'update', 'partial_update', 'destroy',
+        ):
             return [permissions.IsAuthenticated(), IsTeacher()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        """教师可以看到所有学生（方便分配考试等），学生只能看自己"""
+        """教师可管理所有账号（学生 + 教师），学生只能看自己"""
         qs = super().get_queryset()
-        if self.request.user.user_type == 'teacher':
-            return qs.filter(user_type='student') | User.objects.filter(id=self.request.user.id)
-        if self.request.user.user_type == 'student':
-            return qs.filter(id=self.request.user.id)
+        user = self.request.user
+        if user.user_type != 'teacher':
+            return qs.filter(id=user.id)
+        # 教师：默认返回全部账号，可用 ?user_type=student|teacher 过滤
+        user_type = self.request.query_params.get('user_type')
+        if user_type in ('student', 'teacher'):
+            return qs.filter(user_type=user_type)
         return qs
 
     @action(detail=False, methods=['get', 'put', 'patch'])
     def me(self, request):
         """查看或修改当前登录用户信息"""
         if request.method == 'GET':
-            return Response(UserSerializer(request.user).data)
-        serializer = UserSerializer(request.user, data=request.data, partial=True)
+            return Response(self.get_serializer(request.user).data)
+        serializer = self.get_serializer(
+            request.user, data=request.data, partial=True
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
