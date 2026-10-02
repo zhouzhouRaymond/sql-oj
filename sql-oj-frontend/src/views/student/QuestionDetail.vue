@@ -13,13 +13,26 @@
       >
         📝 我的提交
       </el-button>
+      <!-- 专注模式：收起左侧题目面板，让编辑器与判题结果占满整宽 -->
+      <el-button
+        size="small"
+        title="收起 / 展开左侧题目面板"
+        @click="toggleLeftColumn"
+      >
+        {{ leftCollapsed ? '📖 显示题目' : '🎯 专注模式' }}
+      </el-button>
     </div>
 
     <!-- 主要内容 -->
     <div v-loading="loading" class="content">
-      <div class="content-columns">
-        <!-- 左栏：题目信息 -->
-        <div class="column-left">
+      <div ref="columnsRef" class="content-columns">
+        <!-- 左栏：题目信息（可拖动分隔条调宽，可折叠为专注模式） -->
+        <div
+          v-if="!leftCollapsed"
+          class="column-left"
+          :style="{ flexGrow: leftRatio }"
+        >
+
           <!-- 题目信息卡片 -->
           <el-card class="question-info">
             <template #header>
@@ -69,8 +82,17 @@
             <!-- ❌ 建表语句已隐藏，学生不需要看到 -->
           </el-card>
         </div>
+        <!-- 拖拽分隔条：调整左右栏宽度（双击恢复均分，宽度会被记住） -->
+        <div
+          v-if="!leftCollapsed"
+          class="splitter"
+          title="拖动调整左右栏宽度，双击恢复均分"
+          @pointerdown.prevent="startResize"
+          @dblclick="resetRatio"
+        ></div>
         <!-- 右栏：SQL 编辑器与判题结果（提交后出现） -->
-        <div class="column-right">
+        <div class="column-right" :style="{ flexGrow: 1 - leftRatio }">
+
           <!-- SQL 编辑器 -->
           <el-card class="sql-editor">
             <template #header>
@@ -250,7 +272,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
@@ -469,9 +491,107 @@ const caseDataShown = computed(() =>
   failedCases.value.some((item: any) => item.test_input != null)
 )
 
+// ===== 布局：拖动分隔条记忆栏宽 + 专注模式（收起左栏） =====
+const LAYOUT_STORAGE_KEY = 'sql-oj:question-detail-layout'
+// 分隔条宽度与两栏间距（需与下方 CSS 保持一致，用于换算拖拽比例）
+const SPLITTER_WIDTH = 10
+const COLUMN_GAP = 12
+const RATIO_MIN = 0.3
+const RATIO_MAX = 0.7
+// 两栏改为上下堆叠的窗口宽度（与 CSS 的 992px 断点保持一致）
+const STACK_BREAKPOINT = 992
+
+const columnsRef = ref<HTMLElement | null>(null)
+// 左栏宽度占比（默认均分）；拖动分隔条后写入 localStorage，下次访问仍然生效
+const leftRatio = ref(0.5)
+// 专注模式：收起左栏让编辑器与判题结果占满整宽（仅本次会话有效，避免下次打开看不到题目）
+const leftCollapsed = ref(false)
+let resizing = false
+
+const saveLayout = () => {
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ ratio: leftRatio.value }))
+  } catch (error) {
+    // 隐私模式等场景写入失败可忽略
+  }
+}
+
+const loadLayout = () => {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY)
+    if (!raw) return
+    const data = JSON.parse(raw)
+    const ratio = Number(data?.ratio)
+    if (ratio >= RATIO_MIN && ratio <= RATIO_MAX) leftRatio.value = ratio
+  } catch (error) {
+    // 存储内容损坏时忽略，使用默认均分
+  }
+}
+
+// 根据指针位置换算左栏占比（扣掉分隔条与两栏间距）
+const applyRatioFromX = (clientX: number) => {
+  const container = columnsRef.value
+  if (!container) return
+  const rect = container.getBoundingClientRect()
+  const usable = rect.width - SPLITTER_WIDTH - COLUMN_GAP * 2
+  if (usable <= 0) return
+  const ratio = (clientX - rect.left - COLUMN_GAP) / usable
+  leftRatio.value = Math.min(RATIO_MAX, Math.max(RATIO_MIN, ratio))
+}
+
+const onResizeMove = (event: PointerEvent) => {
+  if (!resizing) return
+  applyRatioFromX(event.clientX)
+}
+
+const stopResize = () => {
+  if (!resizing) return
+  resizing = false
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  saveLayout()
+}
+
+// 拖动分隔条缩放两栏（鼠标/触屏统一用 pointer 事件）
+const startResize = (event: PointerEvent) => {
+  // 窄屏时两栏已上下堆叠，无需（也无法）拖拽
+  if (window.innerWidth <= STACK_BREAKPOINT) return
+  resizing = true
+  applyRatioFromX(event.clientX)
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+// 双击分隔条恢复均分
+const resetRatio = () => {
+  leftRatio.value = 0.5
+  saveLayout()
+}
+
+// 专注模式开关：折叠/展开左栏，正在拖拽时先结束拖拽
+const toggleLeftColumn = () => {
+  leftCollapsed.value = !leftCollapsed.value
+  stopResize()
+}
+
 onMounted(() => {
   loadQuestion()
+  loadLayout()
 })
+
+onUnmounted(() => {
+  // 组件卸载时移除可能残留的拖拽监听
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+})
+
 </script>
 
 <style scoped>
@@ -511,14 +631,37 @@ onMounted(() => {
 .content-columns {
   display: flex;
   align-items: flex-start;
-  gap: 20px;
+  gap: 12px;
 }
-.column-left {
-  flex: 1 1 460px;
-}
+/* 两栏宽度由 flex-grow 比例决定（内联样式），拖动分隔条即可调整 */
+.column-left,
 .column-right {
-  flex: 1 1 520px;
+  flex: 1 1 0;
 }
+/* 宽屏下左栏粘性固定：右栏判题结果较长时，题目/样例始终可见；
+   左栏自身高于视口时改为内部滚动，避免底部内容看不到 */
+@media (min-width: 993px) {
+  .column-left {
+    position: sticky;
+    top: 20px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+  }
+}
+/* 两栏之间的拖拽分隔条 */
+.splitter {
+  flex: 0 0 10px;
+  align-self: stretch;
+  min-height: 200px;
+  cursor: col-resize;
+  border-radius: 5px;
+  background-color: #e4e7ed;
+  transition: background-color 0.15s;
+}
+.splitter:hover {
+  background-color: #c0c4cc;
+}
+
 /* min-width: 0 让列内的宽表格使用自身横向滚动条，而不是把两栏撑破 */
 .column-left,
 .column-right {
@@ -780,6 +923,10 @@ onMounted(() => {
   .column-right {
     width: 100%;
     flex: 1 1 auto;
+  }
+  /* 上下堆叠时隐藏拖拽分隔条 */
+  .splitter {
+    display: none;
   }
 }
 

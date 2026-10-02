@@ -42,7 +42,7 @@
           </el-table-column>
           <el-table-column label="操作" width="100" align="center">
             <template #default="{ row }">
-              <el-button type="primary" link @click="viewSubmission(row.submission_id)">查看SQL</el-button>
+              <el-button type="primary" link @click="viewSubmission(row.submission_id)">查看详情</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -52,9 +52,28 @@
       </div>
     </div>
 
-    <!-- 查看SQL弹窗 -->
-    <el-dialog v-model="sqlDialogVisible" title="提交的SQL" width="600px">
-      <pre style="white-space: pre-wrap; word-break: break-all;">{{ currentSQL }}</pre>
+    <!-- 查看提交详情：SQL + 判题明细（失败用例 / 运行结果表格化） -->
+    <el-dialog v-model="detailVisible" title="提交详情" width="760px">
+      <div class="detail-item">
+        <strong>提交 ID：</strong>{{ currentDetail.id }}
+      </div>
+      <div class="detail-item">
+        <strong>判题状态：</strong>
+        <el-tag :type="statusTagType(currentDetail.execution_status)">
+          {{ currentDetail.execution_status || 'PENDING' }}
+        </el-tag>
+      </div>
+      <div class="detail-item">
+        <strong>得分：</strong>{{ currentDetail.score ?? 0 }}
+      </div>
+      <div class="detail-item">
+        <strong>提交的 SQL：</strong>
+        <pre class="sql-detail">{{ detailLoading ? '加载中…' : (currentDetail.submitted_sql || '（空）') }}</pre>
+      </div>
+      <!-- 判题明细：与「我的提交」「题目详情」共用同一组件 -->
+      <div v-if="!detailLoading" class="detail-item">
+        <SubmissionCaseDetail :detail="currentDetail" />
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -65,6 +84,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getExamResult } from '../../api/exams'
 import request from '../../api/request'
+import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,8 +98,21 @@ const result = ref<any>({
   details: []
 })
 
-const sqlDialogVisible = ref(false)
-const currentSQL = ref('')
+// 提交详情弹窗：SQL + 判题明细（失败用例 / 运行结果表格化展示）
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const currentDetail = ref<any>({})
+
+const statusTagType = (status: string) => {
+  switch (status) {
+    case 'ACCEPTED': return 'success'
+    case 'WRONG_ANSWER': return 'danger'
+    case 'ERROR': return 'danger'
+    case 'TIMEOUT': return 'warning'
+    default: return 'info'
+  }
+}
+
 
 const getCurrentUser = () => {
   const userStr = localStorage.getItem('user')
@@ -182,13 +215,19 @@ const goToSubmissions = () => {
   router.push({ path: '/submissions', query: { from: route.fullPath } })
 }
 
+// 点击「查看详情」：先展示基础信息，再按 id 拉取 SQL 与判题明细
 const viewSubmission = async (submissionId: number) => {
+  if (!submissionId) return
+  detailVisible.value = true
+  detailLoading.value = true
+  currentDetail.value = { id: submissionId }
   try {
     const res = await request.get(`/submissions/${submissionId}/`)
-    currentSQL.value = res.data.submitted_sql || res.data.sql || '暂无SQL'
-    sqlDialogVisible.value = true
+    currentDetail.value = res.data || {}
   } catch (error) {
-    ElMessage.error('获取SQL失败')
+    ElMessage.error('获取提交详情失败')
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -255,7 +294,26 @@ onMounted(() => {
   padding: 20px;
 }
 
+/* 提交详情弹窗 */
+.detail-item {
+  margin-bottom: 12px;
+}
+.sql-detail {
+  background-color: #f5f7fa;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+  margin: 4px 0 0;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* ===== 窄窗口自适应 ===== */
+
 @media (max-width: 768px) {
   .exam-result-container {
     padding: 12px;

@@ -737,13 +737,15 @@ onUnmounted(() => {
 }
 
 .sample-row {
+  /* 样例输入 / 样例输出 上下排列（与学生题目详情页保持一致） */
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
   margin-top: 16px;
 }
 .sample-item {
-  flex: 1;
+  /* 单列布局下占满整栏，宽样例表格不再被挤成半栏 */
+  width: 100%;
 }
 
 .sql-block,
@@ -835,11 +837,13 @@ onUnmounted(() => {
   margin-bottom: 6px;
 }
 .test-case-row {
+  /* 测试输入 / 预期输出 上下排列（预期输出多为表格，占满整栏更易读） */
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
 }
 .test-case-row > div {
-  flex: 1;
+  width: 100%;
 }
 .test-case-row .label {
   font-size: 13px;
@@ -992,12 +996,6 @@ onUnmounted(() => {
     flex-wrap: wrap;
     gap: 12px;
     padding: 12px 16px;
-  }
-  .sample-row {
-    flex-direction: column;
-  }
-  .test-case-row {
-    flex-direction: column;
   }
   .card-header {
     flex-wrap: wrap;
