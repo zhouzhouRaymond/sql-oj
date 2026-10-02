@@ -64,11 +64,11 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'display_name', 'name', 'email', 'user_type',
-            'permission_level', 'teacher', 'password', 'is_active',
+            'teacher', 'password', 'is_active',
             'date_joined', 'last_login',
         )
         read_only_fields = (
-            'id', 'username', 'user_type', 'permission_level', 'teacher',
+            'id', 'username', 'user_type', 'teacher',
             'is_active', 'date_joined', 'last_login',
         )
         extra_kwargs = {

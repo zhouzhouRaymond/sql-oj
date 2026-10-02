@@ -7,16 +7,10 @@ class User(AbstractUser):
         ('student', 'Student'),
         ('teacher', 'Teacher'),
     )
-    PERMISSION_CHOICES = (
-        ('admin', 'Admin'),
-        ('teacher', 'Teacher'),
-    )
 
+    # 说明：教师即管理员——所有教师（user_type == 'teacher'）都拥有账号管理等
+    # 全部管理功能，不再区分「admin / teacher」权限级别。
     user_type = models.CharField(max_length=10, choices=USER_TYPE_CHOICES)
-    permission_level = models.CharField(
-        max_length=10, choices=PERMISSION_CHOICES,
-        null=True, blank=True
-    )
     teacher = models.ForeignKey(
         'self', on_delete=models.SET_NULL,
         null=True, blank=True,

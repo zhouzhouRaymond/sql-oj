@@ -88,3 +88,74 @@ class SingleSessionLoginTests(APITestCase):
         for _ in range(11):
             last_status = self._login().status_code
         self.assertEqual(last_status, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class AccountManagementPermissionTests(APITestCase):
+    """教师即管理员：所有教师都拥有账号管理功能。"""
+
+    def setUp(self):
+        cache.clear()
+        self.teacher = User.objects.create_user(
+            username='teacher_a', password='pass1234', user_type='teacher',
+        )
+        self.student = User.objects.create_user(
+            username='student_a', password='pass1234', user_type='student',
+        )
+
+    def test_teacher_can_list_accounts(self):
+        self.client.force_authenticate(self.teacher)
+        self.assertEqual(
+            self.client.get('/api/users/').status_code, status.HTTP_200_OK
+        )
+
+    def test_teacher_can_create_teacher_account(self):
+        self.client.force_authenticate(self.teacher)
+        resp = self.client.post(
+            '/api/users/',
+            {
+                'username': 'teacher_b',
+                'password': 'pass1234',
+                'user_type': 'teacher',
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            User.objects.get(username='teacher_b').user_type, 'teacher'
+        )
+
+    def test_teacher_can_edit_and_disable_account(self):
+        self.client.force_authenticate(self.teacher)
+        resp = self.client.patch(
+            f'/api/users/{self.student.id}/',
+            {'is_active': False},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.is_active)
+
+    def test_any_teacher_can_manage_accounts(self):
+        # 另一名普通教师账号同样能管理账号（不存在“只有管理员能管”的限制）
+        other = User.objects.create_user(
+            username='teacher_c', password='pass1234', user_type='teacher',
+        )
+        self.client.force_authenticate(other)
+        self.assertEqual(
+            self.client.get('/api/users/').status_code, status.HTTP_200_OK
+        )
+
+    def test_student_cannot_manage_accounts(self):
+        self.client.force_authenticate(self.student)
+        self.assertEqual(
+            self.client.get('/api/users/').status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            self.client.post(
+                '/api/users/',
+                {'username': 'x', 'password': 'pass1234', 'user_type': 'student'},
+                format='json',
+            ).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
