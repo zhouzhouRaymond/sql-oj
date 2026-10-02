@@ -152,6 +152,12 @@ const handleLogout = () => {
   flex-direction: column;
   /* 折叠 / 展开时宽度平滑过渡，避免侧边栏“跳一下” */
   transition: width 0.2s ease;
+  /* 固定为视口高度并吸附在顶部：内容比一屏长时（如提交记录页），
+     底部「用户名 + 退出」不会被页面撑到文档末尾而“消失”。
+     用 sticky 而非 fixed，保持窗口仍是滚动容器（题目管理页依赖 window.scroll 触底加载）。 */
+  height: 100vh;
+  position: sticky;
+  top: 0;
 }
 /* 折叠态：只留图标（64px 与 el-menu 默认的折叠宽度一致） */
 .sidebar.collapsed {
@@ -198,6 +204,8 @@ const handleLogout = () => {
   flex: 1;
   border-right: none;
   background-color: #304156;
+  /* 菜单过长时在侧边栏内部滚动，保证底部用户区始终可见 */
+  overflow-y: auto;
 }
 .sidebar :deep(.el-menu-item) {
   color: #bfcbd9;
@@ -243,11 +251,15 @@ const handleLogout = () => {
   }
   .sidebar {
     width: 100%;
+    /* 窄屏是顶部横向菜单，恢复常规文档流（不吸附、不限制高度） */
+    height: auto;
+    position: static;
   }
   .sidebar :deep(.el-menu) {
     display: flex;
     flex-wrap: wrap;
     border-right: none;
+    overflow-y: visible;
   }
   .sidebar :deep(.el-menu-item) {
     flex: 1 1 auto;
