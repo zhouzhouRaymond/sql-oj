@@ -17,227 +17,234 @@
 
     <!-- 主要内容 -->
     <div v-loading="loading" class="content">
-      <!-- 题目信息卡片 -->
-      <el-card class="question-info">
-        <template #header>
-          <div class="card-header">
-            <span class="question-title">{{ question.title || '未命名题目' }}</span>
-            <el-tag :type="difficultyTagType(question.difficulty)">
-              {{ difficultyText(question.difficulty) }}
-            </el-tag>
-          </div>
-        </template>
+      <div class="content-columns">
+        <!-- 左栏：题目信息 -->
+        <div class="column-left">
+          <!-- 题目信息卡片 -->
+          <el-card class="question-info">
+            <template #header>
+              <div class="card-header">
+                <span class="question-title">{{ question.title || '未命名题目' }}</span>
+                <el-tag :type="difficultyTagType(question.difficulty)">
+                  {{ difficultyText(question.difficulty) }}
+                </el-tag>
+              </div>
+            </template>
 
-        <!-- ✅ 题目描述：渲染 Markdown（右侧提供跳转到「我的提交」的入口） -->
-        <div class="section">
-          <div class="section-header">
-            <h3>📖 题目描述</h3>
-          </div>
-          <div class="markdown-body" v-html="renderedDescription"></div>
-        </div>
+            <!-- ✅ 题目描述：渲染 Markdown（右侧提供跳转到「我的提交」的入口） -->
+            <div class="section">
+              <div class="section-header">
+                <h3>📖 题目描述</h3>
+              </div>
+              <div class="markdown-body" v-html="renderedDescription"></div>
+            </div>
 
-        <!-- ✅ 表结构预览：从建表语句中解析 -->
-        <div v-if="tablePreview" class="section">
-          <h3>📊 表结构预览</h3>
-          <div class="table-preview">
-            <el-table :data="tablePreview.rows" border stripe size="small">
-              <el-table-column
-                v-for="col in tablePreview.columns"
-                :key="col"
-                :prop="col"
-                :label="col"
-              />
-            </el-table>
-          </div>
-        </div>
-
-        <!-- ✅ 样例输入/输出：渲染 Markdown -->
-        <div class="sample-row">
-          <div class="sample-item">
-            <h3>📥 样例输入</h3>
-            <div class="markdown-body sample-content" v-html="renderedSampleInput"></div>
-          </div>
-          <div class="sample-item">
-            <h3>📤 样例输出</h3>
-            <div class="markdown-body sample-content" v-html="renderedSampleOutput"></div>
-          </div>
-        </div>
-
-        <!-- ❌ 建表语句已隐藏，学生不需要看到 -->
-      </el-card>
-
-      <!-- SQL 编辑器 -->
-      <el-card class="sql-editor">
-        <template #header>
-          <span>✏️ 编写你的 SQL</span>
-        </template>
-        <SqlEditor
-          v-model="sqlCode"
-          :min-height="240"
-          placeholder="请输入你的 SQL 语句..."
-        />
-        <div class="actions">
-          <el-button type="primary" @click="handleSubmit" :loading="submitting">
-            🚀 提交判题
-          </el-button>
-          <el-button @click="resetCode">重置</el-button>
-        </div>
-      </el-card>
-
-      <!-- 判题结果 -->
-      <el-card v-if="result" class="result">
-        <template #header>
-          <span>📊 判题结果</span>
-        </template>
-        <div class="result-content">
-          <div class="status">
-            <span>状态：</span>
-            <el-tag :type="statusTagType(result.execution_status)">
-              {{ statusText(result.execution_status) }}
-            </el-tag>
-          </div>
-          <div class="score">
-            <span>得分：</span>
-            <span class="score-value">{{ result.score ?? 0 }}</span>
-          </div>
-          <!-- 判题明细：判题错误时回显「未通过的测试用例」 -->
-          <div v-if="result.judge_details" class="details">
-            <h4>
-              {{ result.execution_status === 'ACCEPTED' ? '✅ 用例通过情况' : '❌ 失败的测试用例' }}
-            </h4>
-
-            <!-- 整体执行失败（如建表语句报错、判题服务异常）时给出原因 -->
-            <el-alert
-              v-if="result.judge_details.error_message"
-              class="detail-alert"
-              type="warning"
-              :closable="false"
-              show-icon
-              :title="result.judge_details.error_message"
-            />
-
-            <p class="detail-summary">
-              共 {{ result.judge_details.total }} 个测试用例，通过
-              {{ result.judge_details.passed_count }} 个。
-            </p>
-
-            <!-- ✅ 答对时直接展示运行结果（表格可能很宽，已支持横向滚动） -->
-            <template v-if="result.execution_status === 'ACCEPTED' && caseOutputs.length > 0">
-              <el-radio-group
-                v-if="caseOutputs.length > 1"
-                v-model="activeCaseIndex"
-                size="small"
-                class="case-output-tabs"
-              >
-                <el-radio-button
-                  v-for="item in caseOutputs"
-                  :key="item.index"
-                  :value="item.index"
-                >
-                  用例 {{ item.index }}
-                </el-radio-button>
-              </el-radio-group>
-
-              <div class="result-table-wrap">
-                <el-table
-                  :data="resultTable.rows"
-                  border
-                  stripe
-                  size="small"
-                  :style="{ minWidth: tableMinWidth(resultTable) }"
-                >
+            <!-- ✅ 表结构预览：从建表语句中解析 -->
+            <div v-if="tablePreview" class="section">
+              <h3>📊 表结构预览</h3>
+              <div class="table-preview">
+                <el-table :data="tablePreview.rows" border stripe size="small">
                   <el-table-column
-                    v-for="col in resultTable.columns"
-                    :key="col.prop"
-                    :prop="col.prop"
-                    :label="col.label"
-                    min-width="120"
+                    v-for="col in tablePreview.columns"
+                    :key="col"
+                    :prop="col"
+                    :label="col"
                   />
                 </el-table>
               </div>
-              <p v-if="resultTable.rows.length === 0" class="detail-note">
-                查询结果为 0 行。
-              </p>
-            </template>
+            </div>
 
-            <template v-if="failedCases.length > 0">
-              <div
-                v-for="caseItem in failedCaseViews"
-                :key="caseItem.index"
-                class="failed-case"
-              >
-                <div class="failed-case-title">
-                  <el-tag type="danger" size="small">用例 {{ caseItem.index }}</el-tag>
-                  <span v-if="caseItem.error_message" class="case-error">
-                    {{ caseItem.error_message }}
-                  </span>
-                  <span v-else class="case-hint">执行结果与预期不一致</span>
-                </div>
-
-                <!-- 题目开启了"展示用例输入/预期输出"时（教师始终可见）一并给出用例数据 -->
-                <div v-if="caseItem.test_input != null" class="case-input">
-                  <span class="label">测试输入（用例数据）：</span>
-                  <pre>{{ caseItem.test_input || '（空）' }}</pre>
-                </div>
-
-                <div class="case-output">
-                  <span class="label">你的输出：</span>
-                  <div
-                    v-if="caseItem.actualTable.columns.length > 0"
-                    class="result-table-wrap"
-                  >
-                    <el-table
-                      :data="caseItem.actualTable.rows"
-                      border
-                      size="small"
-                      :style="{ minWidth: tableMinWidth(caseItem.actualTable) }"
-                    >
-                      <el-table-column
-                        v-for="col in caseItem.actualTable.columns"
-                        :key="col.prop"
-                        :prop="col.prop"
-                        :label="col.label"
-                        min-width="120"
-                      />
-                    </el-table>
-                  </div>
-                  <pre v-else>{{ caseItem.actual_output || '（空）' }}</pre>
-                </div>
-
-                <div v-if="caseItem.expected_output != null" class="case-expected">
-                  <span class="label">预期输出：</span>
-                  <div
-                    v-if="caseItem.expectedTable.columns.length > 0"
-                    class="result-table-wrap"
-                  >
-                    <el-table
-                      :data="caseItem.expectedTable.rows"
-                      border
-                      size="small"
-                      :style="{ minWidth: tableMinWidth(caseItem.expectedTable) }"
-                    >
-                      <el-table-column
-                        v-for="col in caseItem.expectedTable.columns"
-                        :key="col.prop"
-                        :prop="col.prop"
-                        :label="col.label"
-                        min-width="120"
-                      />
-                    </el-table>
-                  </div>
-                  <pre v-else>{{ caseItem.expected_output || '（空）' }}</pre>
-                </div>
+            <!-- ✅ 样例输入/输出：渲染 Markdown -->
+            <div class="sample-row">
+              <div class="sample-item">
+                <h3>📥 样例输入</h3>
+                <div class="markdown-body sample-content" v-html="renderedSampleInput"></div>
               </div>
-              <p v-if="!caseDataShown" class="detail-note">
-                为保护隐藏用例，此处不展示用例的输入与预期输出；可结合题目描述、样例自行排查。
-              </p>
-            </template>
-            <p v-else-if="!result.judge_details.total" class="detail-note">
-              本次提交未记录用例明细（可能是较早的提交）。
-            </p>
-          </div>
+              <div class="sample-item">
+                <h3>📤 样例输出</h3>
+                <div class="markdown-body sample-content" v-html="renderedSampleOutput"></div>
+              </div>
+            </div>
+
+            <!-- ❌ 建表语句已隐藏，学生不需要看到 -->
+          </el-card>
         </div>
-      </el-card>
+        <!-- 右栏：SQL 编辑器与判题结果（提交后出现） -->
+        <div class="column-right">
+          <!-- SQL 编辑器 -->
+          <el-card class="sql-editor">
+            <template #header>
+              <span>✏️ 编写你的 SQL</span>
+            </template>
+            <SqlEditor
+              v-model="sqlCode"
+              :min-height="240"
+              placeholder="请输入你的 SQL 语句..."
+            />
+            <div class="actions">
+              <el-button type="primary" @click="handleSubmit" :loading="submitting">
+                🚀 提交判题
+              </el-button>
+              <el-button @click="resetCode">重置</el-button>
+            </div>
+          </el-card>
+
+          <!-- 判题结果 -->
+          <el-card v-if="result" class="result">
+            <template #header>
+              <span>📊 判题结果</span>
+            </template>
+            <div class="result-content">
+              <div class="status">
+                <span>状态：</span>
+                <el-tag :type="statusTagType(result.execution_status)">
+                  {{ statusText(result.execution_status) }}
+                </el-tag>
+              </div>
+              <div class="score">
+                <span>得分：</span>
+                <span class="score-value">{{ result.score ?? 0 }}</span>
+              </div>
+              <!-- 判题明细：判题错误时回显「未通过的测试用例」 -->
+              <div v-if="result.judge_details" class="details">
+                <h4>
+                  {{ result.execution_status === 'ACCEPTED' ? '✅ 用例通过情况' : '❌ 失败的测试用例' }}
+                </h4>
+
+                <!-- 整体执行失败（如建表语句报错、判题服务异常）时给出原因 -->
+                <el-alert
+                  v-if="result.judge_details.error_message"
+                  class="detail-alert"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  :title="result.judge_details.error_message"
+                />
+
+                <p class="detail-summary">
+                  共 {{ result.judge_details.total }} 个测试用例，通过
+                  {{ result.judge_details.passed_count }} 个。
+                </p>
+
+                <!-- ✅ 答对时直接展示运行结果（表格可能很宽，已支持横向滚动） -->
+                <template v-if="result.execution_status === 'ACCEPTED' && caseOutputs.length > 0">
+                  <el-radio-group
+                    v-if="caseOutputs.length > 1"
+                    v-model="activeCaseIndex"
+                    size="small"
+                    class="case-output-tabs"
+                  >
+                    <el-radio-button
+                      v-for="item in caseOutputs"
+                      :key="item.index"
+                      :value="item.index"
+                    >
+                      用例 {{ item.index }}
+                    </el-radio-button>
+                  </el-radio-group>
+
+                  <div class="result-table-wrap">
+                    <el-table
+                      :data="resultTable.rows"
+                      border
+                      stripe
+                      size="small"
+                      :style="{ minWidth: tableMinWidth(resultTable) }"
+                    >
+                      <el-table-column
+                        v-for="col in resultTable.columns"
+                        :key="col.prop"
+                        :prop="col.prop"
+                        :label="col.label"
+                        min-width="120"
+                      />
+                    </el-table>
+                  </div>
+                  <p v-if="resultTable.rows.length === 0" class="detail-note">
+                    查询结果为 0 行。
+                  </p>
+                </template>
+
+                <template v-if="failedCases.length > 0">
+                  <div
+                    v-for="caseItem in failedCaseViews"
+                    :key="caseItem.index"
+                    class="failed-case"
+                  >
+                    <div class="failed-case-title">
+                      <el-tag type="danger" size="small">用例 {{ caseItem.index }}</el-tag>
+                      <span v-if="caseItem.error_message" class="case-error">
+                        {{ caseItem.error_message }}
+                      </span>
+                      <span v-else class="case-hint">执行结果与预期不一致</span>
+                    </div>
+
+                    <!-- 题目开启了"展示用例输入/预期输出"时（教师始终可见）一并给出用例数据 -->
+                    <div v-if="caseItem.test_input != null" class="case-input">
+                      <span class="label">测试输入（用例数据）：</span>
+                      <pre>{{ caseItem.test_input || '（空）' }}</pre>
+                    </div>
+
+                    <div class="case-output">
+                      <span class="label">你的输出：</span>
+                      <div
+                        v-if="caseItem.actualTable.columns.length > 0"
+                        class="result-table-wrap"
+                      >
+                        <el-table
+                          :data="caseItem.actualTable.rows"
+                          border
+                          size="small"
+                          :style="{ minWidth: tableMinWidth(caseItem.actualTable) }"
+                        >
+                          <el-table-column
+                            v-for="col in caseItem.actualTable.columns"
+                            :key="col.prop"
+                            :prop="col.prop"
+                            :label="col.label"
+                            min-width="120"
+                          />
+                        </el-table>
+                      </div>
+                      <pre v-else>{{ caseItem.actual_output || '（空）' }}</pre>
+                    </div>
+
+                    <div v-if="caseItem.expected_output != null" class="case-expected">
+                      <span class="label">预期输出：</span>
+                      <div
+                        v-if="caseItem.expectedTable.columns.length > 0"
+                        class="result-table-wrap"
+                      >
+                        <el-table
+                          :data="caseItem.expectedTable.rows"
+                          border
+                          size="small"
+                          :style="{ minWidth: tableMinWidth(caseItem.expectedTable) }"
+                        >
+                          <el-table-column
+                            v-for="col in caseItem.expectedTable.columns"
+                            :key="col.prop"
+                            :prop="col.prop"
+                            :label="col.label"
+                            min-width="120"
+                          />
+                        </el-table>
+                      </div>
+                      <pre v-else>{{ caseItem.expected_output || '（空）' }}</pre>
+                    </div>
+                  </div>
+                  <p v-if="!caseDataShown" class="detail-note">
+                    为保护隐藏用例，此处不展示用例的输入与预期输出；可结合题目描述、样例自行排查。
+                  </p>
+                </template>
+                <p v-else-if="!result.judge_details.total" class="detail-note">
+                  本次提交未记录用例明细（可能是较早的提交）。
+                </p>
+              </div>
+            </div>
+          </el-card>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -495,8 +502,31 @@ onMounted(() => {
 }
 
 .content {
-  max-width: 1000px;
+  /* 两栏布局需要更宽的容器（左：题目信息；右：编辑器 + 判题结果） */
+  max-width: 1360px;
   margin: 0 auto;
+}
+
+/* ✅ 两栏布局：左侧题目信息，右侧 SQL 编辑器与判题结果 */
+.content-columns {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+.column-left {
+  flex: 1 1 460px;
+}
+.column-right {
+  flex: 1 1 520px;
+}
+/* min-width: 0 让列内的宽表格使用自身横向滚动条，而不是把两栏撑破 */
+.column-left,
+.column-right {
+  min-width: 0;
+}
+/* 左栏卡片不再需要下外边距（两栏间距由 gap 控制） */
+.column-left .question-info {
+  margin-bottom: 0;
 }
 
 .question-info {
@@ -735,6 +765,19 @@ onMounted(() => {
 }
 .result-table-wrap .el-table {
   border-radius: 6px;
+}
+
+/* 中等宽度（<=992px）：两栏改为上下堆叠，避免单栏过窄 */
+@media (max-width: 992px) {
+  .content-columns {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .column-left,
+  .column-right {
+    width: 100%;
+    flex: 1 1 auto;
+  }
 }
 
 /* ===== 窄窗口自适应 ===== */
