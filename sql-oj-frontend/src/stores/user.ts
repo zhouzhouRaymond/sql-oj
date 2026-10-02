@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User } from '../types/api'
-import { login as loginApi, getCurrentUser } from '../api/auth'
+import { login as loginApi, getCurrentUser, logout as logoutApi } from '../api/auth'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref<User | null>(null)
@@ -55,12 +55,17 @@ export const useUserStore = defineStore('user', () => {
     return res
   }
 
-  // 登出
+  // 登出：先清空本地登录态（同步，保证守卫立即生效），
+  // 再尽力通知后端结束会话（失败忽略，不影响本地登出）。
   const logout = () => {
+    const accessToken = token.value
     user.value = null
     setToken(null)
     localStorage.removeItem('user')
     sessionChecked.value = true
+    if (accessToken) {
+      logoutApi(accessToken).catch(() => {})
+    }
   }
 
   // 从本地恢复用户信息（仅用于界面展示，不做校验）

@@ -28,6 +28,13 @@ class User(AbstractUser):
     display_name = models.CharField(
         '用户名', max_length=50, blank=True, default=''
     )
+    # 单点登录：记录该账号当前唯一有效的会话标识。
+    # 每次登录都会生成新的 sid 并写入 token；认证时校验两者一致，
+    # 因此新登录会自动覆盖该值，使旧会话的 token 立即失效
+    # （见 authentication.SingleSessionJWTAuthentication）。
+    current_session = models.CharField(
+        '当前会话标识', max_length=64, blank=True, default=''
+    )
 
     @property
     def name(self):

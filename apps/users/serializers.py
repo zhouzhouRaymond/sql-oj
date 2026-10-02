@@ -1,4 +1,12 @@
+import uuid
+
+from django.conf import settings
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken, OutstandingToken,
+)
+
 from .models import User
 
 
@@ -106,3 +114,34 @@ class UserAdminSerializer(UserSerializer):
         user.set_password(password)
         user.save()
         return user
+
+
+class LoginSerializer(TokenObtainPairSerializer):
+    """登录：签发 JWT，并实现单点登录（新登录踢掉该账号的旧会话）。
+
+    开启 ``SINGLE_SESSION_ENFORCED`` 时：
+
+    1. 先把该账号此前签发的所有 refresh token 拉黑（旧会话无法再刷新）；
+    2. 再签发新 token，写入唯一会话标识 ``sid`` 并覆盖用户的当前会话，
+       使旧 access token 因 sid 不匹配而立即失效
+       （见 authentication.SingleSessionJWTAuthentication）。
+    """
+
+    @classmethod
+    def get_token(cls, user):
+        enforced = getattr(settings, 'SINGLE_SESSION_ENFORCED', False)
+
+        # 务必在 super().get_token() 之前拉黑：父类会在此时把新签发的
+        # refresh token 登记进 OutstandingToken，先拉黑才能只清理旧会话。
+        if enforced:
+            for token in OutstandingToken.objects.filter(user=user):
+                BlacklistedToken.objects.get_or_create(token=token)
+
+        token = super().get_token(user)
+
+        # 为本次登录生成唯一会话标识，写入 token 并覆盖用户当前会话
+        session_id = uuid.uuid4().hex
+        token['sid'] = session_id
+        User.objects.filter(pk=user.pk).update(current_session=session_id)
+        user.current_session = session_id
+        return token

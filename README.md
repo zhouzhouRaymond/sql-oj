@@ -379,13 +379,18 @@ Local: http://localhost:5173/
 
 所有接口基础地址：`http://localhost:8000`
 
-### 6.1 认证接口（无需登录）
+### 6.1 认证接口
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | /api/auth/register/ | 用户注册 |
-| POST | /api/auth/login/ | 登录，返回 JWT Token |
-| POST | /api/auth/refresh/ | 刷新 Token |
+| 方法 | 路径 | 说明 | 权限 |
+|------|------|------|------|
+| POST | /api/auth/register/ | 用户注册 | 无需登录 |
+| POST | /api/auth/login/ | 登录，返回 JWT Token | 无需登录 |
+| POST | /api/auth/refresh/ | 刷新 Token | 无需登录 |
+| POST | /api/auth/logout/ | 登出，使该账号已签发的 token 立即失效 | 登录用户 |
+
+> **单点登录（单会话）**：默认开启（`SINGLE_SESSION_ENFORCED=True`）。同一账号只能在一个终端在线，**新登录会立即踢掉该账号此前的会话**——旧 access token 失效、旧 refresh token 进入黑名单。可通过环境变量 `SINGLE_SESSION_ENFORCED=False` 关闭。
+>
+> **登录限流**：登录接口按来源 IP 限流（默认 10 次/分钟），超过限制返回 429，用于缓解密码暴力破解。
 
 ### 6.2 用户管理
 
@@ -456,6 +461,9 @@ Local: http://localhost:5173/
 | 5 | 使用正确密码登录 | 返回 access 和 refresh Token |
 | 6 | 使用错误密码登录 | 返回 401 |
 | 7 | 学生 PATCH /api/users/me/ 传 `user_type=teacher` | 返回 200，但 `user_type` 仍为 student（角色字段只读，无法自行提权） |
+| 8 | 同一账号在第二台设备登录（单点登录） | 返回 200；第一台设备的旧 Token 立即失效（旧 access 请求返回 401，旧 refresh 刷新返回 401） |
+| 9 | 登录后调用 POST /api/auth/logout/ | 返回 200，原 access token 立即失效 |
+| 10 | 一分钟内连续尝试登录超过 10 次 | 超出部分返回 429（登录限流） |
 
 <!-- [截图：注册成功] -->
 

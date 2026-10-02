@@ -1,13 +1,19 @@
+from django.conf import settings
 from rest_framework import filters, generics, viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.views import APIView
 from rest_framework_simplejwt.token_blacklist.models import (
     BlacklistedToken, OutstandingToken,
 )
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import User
-from .serializers import RegisterSerializer, UserAdminSerializer, UserSerializer
+from .serializers import (
+    LoginSerializer, RegisterSerializer, UserAdminSerializer, UserSerializer,
+)
 from .permissions import IsTeacher, IsOwnerOrTeacher
+from .throttles import LoginRateThrottle
 from apps.submissions.models import Submission
 from apps.questions.models import Question
 from apps.exams.models import Exam
@@ -27,6 +33,33 @@ class RegisterView(generics.CreateAPIView):
             UserSerializer(user).data,
             status=status.HTTP_201_CREATED
         )
+
+
+class LoginView(TokenObtainPairView):
+    """登录（签发 JWT）。开启单点登录时，新登录会踢掉该账号的旧会话。"""
+
+    serializer_class = LoginSerializer
+    # 按来源 IP 限流，缓解密码暴力破解
+    throttle_classes = [LoginRateThrottle]
+
+
+class LogoutView(APIView):
+    """登出：使该账号已签发的 token 立即失效。
+
+    拉黑所有已签发的 refresh token；开启单点登录时再清空当前会话标识，
+    从而让已签发的 access token 也立即失效。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        for token in OutstandingToken.objects.filter(user=user):
+            BlacklistedToken.objects.get_or_create(token=token)
+        if getattr(settings, 'SINGLE_SESSION_ENFORCED', False):
+            user.current_session = ''
+            user.save(update_fields=['current_session'])
+        return Response({'message': '已退出登录'})
 
 
 class UserViewSet(viewsets.ModelViewSet):

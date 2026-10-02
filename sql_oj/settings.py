@@ -171,14 +171,19 @@ STATIC_URL = 'static/'
 from datetime import timedelta
 
 REST_FRAMEWORK = {
+    # 单点登录版 JWT 认证：除签名/过期外，还校验 token 会话标识与当前会话是否一致
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.users.authentication.SingleSessionJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # 接口限流：登录接口按来源 IP 限制尝试频率，缓解密码暴力破解
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+    },
 }
 
 SIMPLE_JWT = {
@@ -193,6 +198,11 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
+
+# 单点登录（单会话）：同一账号只能在一个终端在线。
+# 开启后，新登录会立即踢掉该账号此前的会话（旧 access token 失效、旧 refresh token 拉黑）。
+# 可通过环境变量 SINGLE_SESSION_ENFORCED=False 关闭。
+SINGLE_SESSION_ENFORCED = env_bool('SINGLE_SESSION_ENFORCED', True)
 
 CORS_ALLOW_ALL_ORIGINS = True  # 开发阶段全开
 

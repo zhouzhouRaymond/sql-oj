@@ -20,7 +20,9 @@ request.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      ElMessage.error('登录已过期，请重新登录')
+      // 优先展示后端返回的原因（如“账号已在其它设备登录，请重新登录”）
+      const detail = error.response?.data?.detail
+      ElMessage.error(typeof detail === 'string' && detail ? detail : '登录已过期，请重新登录')
       localStorage.removeItem('access_token')
       localStorage.removeItem('user')
       window.location.href = '/login'

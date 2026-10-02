@@ -24,3 +24,13 @@ export const register = (data: RegisterData) => {
 export const getCurrentUser = () => {
   return request.get('/users/me/')
 }
+
+// 登出：通知后端结束当前会话（使已签发的 token 立即失效）。
+// 显式传入 token，因为本地登录态会在此之前被清空。
+export const logout = (accessToken?: string) => {
+  return request.post('/auth/logout/', null, {
+    headers: accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
+      : undefined,
+  })
+}
