@@ -630,12 +630,15 @@ onMounted(() => {
 }
 
 .sample-row {
+  /* 样例输入 / 样例输出 上下排列（不再左右并列） */
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
   margin-top: 16px;
 }
 .sample-item {
-  flex: 1;
+  /* 单列布局下占满整宽 */
+  width: 100%;
 }
 .sample-item h3 {
   font-size: 14px;
@@ -789,10 +792,6 @@ onMounted(() => {
     flex-wrap: wrap;
     gap: 12px;
     padding: 12px 16px;
-  }
-  .sample-row {
-    flex-direction: column;
-    gap: 12px;
   }
   .card-header {
     flex-wrap: wrap;
