@@ -18,6 +18,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>统计分析</span>
         </el-menu-item>
+        <el-menu-item index="/submissions">
+          <el-icon><Tickets /></el-icon>
+          <span>提交记录</span>
+        </el-menu-item>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>
           <span>个人中心</span>
@@ -42,7 +46,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'  // ✅ 导入 ElMessageBox
-import { Document, Notebook, DataAnalysis, User, UserFilled } from '@element-plus/icons-vue'
+import { Document, Notebook, DataAnalysis, Tickets, User, UserFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '../../stores/user'
 
 const route = useRoute()

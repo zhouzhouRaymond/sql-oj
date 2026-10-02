@@ -144,7 +144,7 @@
                   border
                   stripe
                   size="small"
-                  :style="{ minWidth: resultTableMinWidth }"
+                  :style="{ minWidth: tableMinWidth(resultTable) }"
                 >
                   <el-table-column
                     v-for="col in resultTable.columns"
@@ -162,7 +162,7 @@
 
             <template v-if="failedCases.length > 0">
               <div
-                v-for="caseItem in failedCases"
+                v-for="caseItem in failedCaseViews"
                 :key="caseItem.index"
                 class="failed-case"
               >
@@ -173,13 +173,63 @@
                   </span>
                   <span v-else class="case-hint">执行结果与预期不一致</span>
                 </div>
+
+                <!-- 题目开启了"展示用例输入/预期输出"时（教师始终可见）一并给出用例数据 -->
+                <div v-if="caseItem.test_input != null" class="case-input">
+                  <span class="label">测试输入（用例数据）：</span>
+                  <pre>{{ caseItem.test_input || '（空）' }}</pre>
+                </div>
+
                 <div class="case-output">
                   <span class="label">你的输出：</span>
-                  <pre>{{ caseItem.actual_output || '（空）' }}</pre>
+                  <div
+                    v-if="caseItem.actualTable.columns.length > 0"
+                    class="result-table-wrap"
+                  >
+                    <el-table
+                      :data="caseItem.actualTable.rows"
+                      border
+                      size="small"
+                      :style="{ minWidth: tableMinWidth(caseItem.actualTable) }"
+                    >
+                      <el-table-column
+                        v-for="col in caseItem.actualTable.columns"
+                        :key="col.prop"
+                        :prop="col.prop"
+                        :label="col.label"
+                        min-width="120"
+                      />
+                    </el-table>
+                  </div>
+                  <pre v-else>{{ caseItem.actual_output || '（空）' }}</pre>
+                </div>
+
+                <div v-if="caseItem.expected_output != null" class="case-expected">
+                  <span class="label">预期输出：</span>
+                  <div
+                    v-if="caseItem.expectedTable.columns.length > 0"
+                    class="result-table-wrap"
+                  >
+                    <el-table
+                      :data="caseItem.expectedTable.rows"
+                      border
+                      size="small"
+                      :style="{ minWidth: tableMinWidth(caseItem.expectedTable) }"
+                    >
+                      <el-table-column
+                        v-for="col in caseItem.expectedTable.columns"
+                        :key="col.prop"
+                        :prop="col.prop"
+                        :label="col.label"
+                        min-width="120"
+                      />
+                    </el-table>
+                  </div>
+                  <pre v-else>{{ caseItem.expected_output || '（空）' }}</pre>
                 </div>
               </div>
-              <p class="detail-note">
-                为保护隐藏用例，此处不展示用例的输入与预期输出；可结合题目描述、样例与上表自行排查。
+              <p v-if="!caseDataShown" class="detail-note">
+                为保护隐藏用例，此处不展示用例的输入与预期输出；可结合题目描述、样例自行排查。
               </p>
             </template>
             <p v-else-if="!result.judge_details.total" class="detail-note">
@@ -394,9 +444,22 @@ const currentCaseOutput = computed(() => {
 
 const resultTable = computed(() => parseResultSet(currentCaseOutput.value))
 
-// 列较多时让表格保持最小宽度，由外层容器横向滚动，避免列被压扁
-const resultTableMinWidth = computed(
-  () => `${Math.max(resultTable.value.columns.length * 140, 320)}px`
+// 表格最小宽度：列多时保持宽度，由外层容器横向滚动
+const tableMinWidth = (table: { columns: unknown[] }) =>
+  `${Math.max((table?.columns?.length || 0) * 140, 320)}px`
+
+// 失败用例的展示数据：把「你的输出 / 预期输出」解析成表格，供模板直接渲染
+const failedCaseViews = computed(() =>
+  failedCases.value.map((item: any) => ({
+    ...item,
+    actualTable: parseResultSet(item.actual_output || ''),
+    expectedTable: parseResultSet(item.expected_output || '')
+  }))
+)
+
+// 后端是否下发了用例输入/预期输出（题目开关开启或当前是教师）
+const caseDataShown = computed(() =>
+  failedCases.value.some((item: any) => item.test_input != null)
 )
 
 onMounted(() => {
@@ -627,10 +690,20 @@ onMounted(() => {
   color: #909399;
   font-size: 13px;
 }
+/* 未通过的用例：标题 + 用例数据 + 实际输出（表格或文本） */
+.case-input,
+.case-expected,
+.case-output {
+  margin-top: 8px;
+}
+.case-input .label,
+.case-expected .label,
 .case-output .label {
   font-size: 13px;
   color: #606266;
 }
+.case-input pre,
+.case-expected pre,
 .case-output pre {
   background-color: white;
   padding: 8px 12px;
@@ -642,6 +715,9 @@ onMounted(() => {
   white-space: pre-wrap;
   word-break: break-all;
   overflow-x: auto;
+}
+.failed-case .result-table-wrap {
+  margin-top: 4px;
 }
 .detail-note {
   margin: 4px 0 0;

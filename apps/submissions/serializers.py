@@ -22,15 +22,36 @@ class SubmissionSerializer(serializers.ModelSerializer):
     def get_judge_details(self, obj):
         raw = obj.judge_details if isinstance(obj.judge_details, dict) else {}
         cases = raw.get('cases') if isinstance(raw.get('cases'), list) else []
-        failed_cases = [
-            {
-                'index': int(case.get('test_case_id') or 0) + 1,  # 前端按 1 开始显示
+
+        # 是否需要一并返回失败用例的「测试输入 / 预期输出」：
+        # - 教师始终可见（题目本来就是教师自己出的）；
+        # - 学生仅在题目开启 show_case_details 开关时可见（默认关闭，避免泄露答案）
+        request = self.context.get('request')
+        is_teacher = bool(
+            request and getattr(request.user, 'user_type', '') == 'teacher'
+        )
+        show_case_data = is_teacher or bool(
+            getattr(obj.question, 'show_case_details', False)
+        )
+        # 用例按 id 升序排列，与判题时下发的顺序一致（test_case_id 即其下标）
+        test_cases = (
+            list(obj.question.test_cases.order_by('id')) if show_case_data else []
+        )
+
+        failed_cases = []
+        for case in cases:
+            if case.get('passed', False):
+                continue
+            idx = int(case.get('test_case_id') or 0)
+            item = {
+                'index': idx + 1,  # 前端按 1 开始显示
                 'actual_output': case.get('actual_output') or '',
                 'error_message': case.get('error_message') or '',
             }
-            for case in cases
-            if not case.get('passed', False)
-        ]
+            if show_case_data and 0 <= idx < len(test_cases):
+                item['test_input'] = test_cases[idx].test_input or ''
+                item['expected_output'] = test_cases[idx].expected_output or ''
+            failed_cases.append(item)
         # 答对（ACCEPTED）时额外返回各用例的实际输出，供前端直接展示运行结果；
         # 未通过时不返回，避免提前泄露隐藏用例对应的结果数据。
         case_outputs = []

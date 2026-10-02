@@ -14,6 +14,11 @@ class Question(models.Model):
     sample_output = models.TextField(blank=True, null=True)
     create_table_sql = models.TextField(blank=True, null=True)
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
+    # 答题失败时，是否向学生展示隐藏用例的「测试输入」与「预期输出」。
+    # 默认关闭：开启后学生可据此构造硬编码答案绕过判题，仅建议用于教学演示。
+    show_case_details = models.BooleanField(
+        '失败时向学生展示用例输入与预期输出', default=False
+    )
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

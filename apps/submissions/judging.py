@@ -76,7 +76,10 @@ def _run_judge(submission_id: int) -> None:
         return
 
     question = submission.question
-    test_cases = list(question.test_cases.values('test_input', 'expected_output'))
+    # 按 id 固定顺序，保证用例序号稳定（judge_details 里的 test_case_id 与之对应）
+    test_cases = list(
+        question.test_cases.order_by('id').values('test_input', 'expected_output')
+    )
     try:
         result = judge_submission(
             submission.submitted_sql, test_cases, question.create_table_sql or ''

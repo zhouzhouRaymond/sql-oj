@@ -31,6 +31,14 @@
         </el-radio-group>
       </el-form-item>
 
+      <!-- 答题失败时是否展示用例明细（默认关闭） -->
+      <el-form-item label="失败详情">
+        <el-switch v-model="form.show_case_details" />
+        <span class="input-hint" style="display: inline-block; margin-left: 10px;">
+          开启后学生答错时可查看该用例的「测试输入」与「预期输出」（便于教学排查，但会降低判题防作弊强度，建议仅在演示题开启）
+        </span>
+      </el-form-item>
+
       <!-- 建表语句 -->
       <el-form-item label="建表语句">
         <SqlEditor v-model="form.create_table_sql" :min-height="150" placeholder="CREATE TABLE ..." />
@@ -128,7 +136,9 @@ const form = ref({
   sample_input: '',
   sample_output: '',
   correct_sql: '',
-  test_cases: [] as { test_input: string; expected_output: string }[]
+  test_cases: [] as { test_input: string; expected_output: string }[],
+  // 答题失败时是否向学生展示用例的「测试输入 / 预期输出」（默认关闭）
+  show_case_details: false
 })
 
 // ✅ 添加测试用例
@@ -158,7 +168,8 @@ const loadQuestion = async (id: number) => {
       sample_input: data.sample_input || '',
       sample_output: data.sample_output || '',
       correct_sql: data.answers?.[0]?.correct_sql || '',
-      test_cases: data.test_cases || []
+      test_cases: data.test_cases || [],
+      show_case_details: !!data.show_case_details
     }
   } catch (error: any) {
     ElMessage.error(error.response?.data?.error || '加载题目数据失败')
@@ -188,7 +199,8 @@ const handleSubmit = async () => {
       sample_input: form.value.sample_input,
       sample_output: form.value.sample_output,
       answers: form.value.correct_sql ? [{ correct_sql: form.value.correct_sql }] : [],
-      test_cases: form.value.test_cases
+      test_cases: form.value.test_cases,
+      show_case_details: form.value.show_case_details
     }
 
     if (isEdit.value) {

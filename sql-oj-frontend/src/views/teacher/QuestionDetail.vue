@@ -78,7 +78,7 @@
                 </span>
               </template>
               <div v-if="question.test_cases && question.test_cases.length > 0">
-                <div v-for="(tc, idx) in question.test_cases" :key="idx" class="test-case-item">
+                <div v-for="(tc, idx) in testCaseViews" :key="idx" class="test-case-item">
                   <span class="test-case-label">用例 {{ idx + 1 }}</span>
                   <div class="test-case-row">
                     <div>
@@ -87,7 +87,26 @@
                     </div>
                     <div>
                       <span class="label">预期输出：</span>
-                      <pre>{{ tc.expected_output || '（空）' }}</pre>
+                      <div
+                        v-if="tc.expectedTable.columns.length > 0"
+                        class="result-table-wrap"
+                      >
+                        <el-table
+                          :data="tc.expectedTable.rows"
+                          border
+                          size="small"
+                          :style="{ minWidth: tableMinWidth(tc.expectedTable) }"
+                        >
+                          <el-table-column
+                            v-for="col in tc.expectedTable.columns"
+                            :key="col.prop"
+                            :prop="col.prop"
+                            :label="col.label"
+                            min-width="120"
+                          />
+                        </el-table>
+                      </div>
+                      <pre v-else>{{ tc.expected_output || '（空）' }}</pre>
                     </div>
                   </div>
                 </div>
@@ -185,6 +204,7 @@ import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
 import { getQuestionSubmissionStats } from '../../api/stats'
+import { parseResultSet } from '../../utils/resultSet'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,6 +212,18 @@ const questionId = computed(() => Number(route.params.id))
 
 const loading = ref(false)
 const question = ref<any>({})
+
+// 测试用例的展示数据：把「预期输出」解析成表格（可能很宽，由外层容器横向滚动）
+const testCaseViews = computed(() =>
+  (question.value?.test_cases || []).map((tc: any) => ({
+    ...tc,
+    expectedTable: parseResultSet(tc.expected_output || '')
+  }))
+)
+
+// 表格最小宽度：列多时保持宽度，由外层容器横向滚动
+const tableMinWidth = (table: { columns: unknown[] }) =>
+  `${Math.max((table?.columns?.length || 0) * 140, 320)}px`
 
 // 🔑 参考答案 / 📥📤 样例 / 🧪 测试用例 默认折叠（空数组=收起），点击标题后才展开显示
 const activePanels = ref<string[]>([])
@@ -642,6 +674,15 @@ onUnmounted(() => {
   font-size: 13px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+/* 预期输出用表格展示：宽表格交给外层容器横向滚动 */
+.result-table-wrap {
+  margin-top: 4px;
+  overflow-x: auto;
+  border-radius: 6px;
+}
+.result-table-wrap .el-table {
+  border-radius: 6px;
 }
 .no-answer {
   padding: 12px;
