@@ -631,6 +631,7 @@ sql_oj/
 │   ├── docker-compose.yml          # 判题数据库容器（复用）
 │   ├── initdb/                     # 容器初始化脚本（权限收敛、public 隔离）
 │   ├── requirements_judge.txt      # 判题服务依赖
+│   ├── load_test.py                # 并发压测工具（纯标准库，见 docs/judge_api_new.md 第 10 节）
 │   └── start_judge.bat             # Windows 启动脚本
 ├── docs/                           # 文档
 │   └── judge_api_new.md                # 判题服务 API 文档

@@ -307,7 +307,7 @@ Charlie|22
 
 1. **schema 隔离**：判题复用常驻容器，每个测试用例使用独立的临时 schema，请求结束整体回滚清空，请求/用例间互不干扰。
 2. **权限收敛**：容器初始化脚本把判题账号降为非超管角色，并将 `public` schema 所有权转移，防止越权访问/删除。
-3. **资源限制**：容器内存限制 `512MB`、CPU 配额、`pids_limit` 进程数限制（避免无限循环/fork 炸弹）。
+3. **资源限制**：容器内存限制 `1GB`、CPU 配额（默认 2 核，见 `docker-compose.yml` 的 `cpu_quota`）、`pids_limit` 进程数限制（避免无限循环/fork 炸弹）。
 4. **能力裁剪**：容器只保留必要的 Linux Capabilities，丢弃 `SYS_ADMIN`、`NET_RAW` 等高危权限。
 5. **SQL 超时**：通过 PostgreSQL 的 `statement_timeout` 参数强制中断长时间运行的查询。
 6. **事务回滚**：每个测试用例在独立连接与独立临时 schema 中执行，结束后整体回滚（回滚即清理），确保用例间数据隔离且不残留。
@@ -379,3 +379,62 @@ A：在请求体中传递 `timeout` 字段（单位秒），或修改 `SQL_TIMEO
 
 **Q：启动时一直停在“等待判题数据库就绪”，能取消吗？**  
 A：可以。等待期间按 `Ctrl+C` 会立即中断启动并退出，无需等到 `JUDGE_DB_READY_TIMEOUT` 超时。若频繁出现，请确认已执行 `docker compose up -d` 启动判题数据库容器，并检查 `JUDGE_DB_HOST`/`JUDGE_DB_PORT` 等配置。
+
+---
+
+## 10. 性能压测
+
+仓库自带压测工具 `judge_service/load_test.py`（**仅用标准库**，宿主机或任意容器内都能直接跑）：
+
+```bash
+# 并发阶梯（1→128），默认打在 http://localhost:8080/judge
+python judge_service/load_test.py
+
+# 固定并发持续压 15 秒，并把每档结果写成 JSON
+python judge_service/load_test.py --mode sustained --concurrency 32 --duration 15 --json result.json
+
+# CPU 型重负载（4 个用例 × 800 行自连接聚合）
+python judge_service/load_test.py --heavy
+
+# 容器内运行（判题服务在 compose 网络里，用容器名寻址）
+docker compose exec -T backend python - --url http://judge-service:8080/judge < judge_service/load_test.py
+```
+
+输出每档并发的吞吐（req/s）、成功率、p50/p95/p99/max 延迟与**响应状态分布**；出现非判题响应
+（HTTP 错误 / 客户端失败）时退出码为 1，便于 CI 里做回归判定。
+
+### 10.1 实测（12 vCPU 宿主机，light 负载 = 1 用例 / 200 行；同一工具与客户端做 A/B）
+
+| 并发 | 2 核配额（当前） | 0.5 核配额（旧值） | 倍率 |
+|------|------------------|--------------------|------|
+| 4 | 69.9 req/s* | 74.2 req/s* | — |
+| 8 | 130.8 | 66.6 | 2.0× |
+| 16 | **214.7** | 48.3 | 4.4× |
+| 32 | 201.9 | 64.9 | 3.1× |
+| 64 | 210.0 | 67.4 | 3.1× |
+| 128 | 196.5 | 62.1 | 3.2× |
+| 长窗 C=16（15 秒） | **230.0**（p50 65 ms，3461/3461 全部 ACCEPTED） | 71.8（p50 204 ms） | **3.2×** |
+
+\* 并发 ≤4 时吞吐受**压测客户端**限制：在宿主机上经 Docker Desktop 端口转发访问，单连接基线约 50 ms
+（≈20 req/s/连接），因此低并发档位反映的是客户端上限而非服务端上限。要测准低并发基线，请在容器网络内运行：
+
+```bash
+docker compose exec -T backend python - --url http://judge-service:8080/judge < judge_service/load_test.py
+```
+
+### 10.2 结论与调优
+
+- **吞吐上限由判题库容器的 CPU 配额决定**：2 核下长窗约 **230 req/s**，0.5 核下约 **72 req/s**（同负载同客户端）；
+  判题服务自身只用了约 1.3 核（宿主 12 核），连接池与线程池都不是瓶颈。
+- 提高配额后**伸缩性恢复正常**：吞吐随并发上升到 C≈16 进入平台期（~200-230 req/s），
+  而不是像 0.5 核时那样「并发越高吞吐越低、延迟线性增长」。
+- 除配额外，压测还暴露并修掉了两个坑：
+  1. **判题库数据 tmpfs 必须给足**：PostgreSQL 默认 `max_wal_size=1GB`，而判题每个请求都要建表/回滚，
+     产生大量 WAL。数据目录只有 256MB 时，持续高并发会写满 tmpfs
+     （`FATAL: could not write to file "pg_wal/xlogtemp.694": No space left on device`）→ 数据库崩溃重启 →
+     复用连接被污染 → 判题批量 `ERROR`。现放宽到 1GB（见 `docker-compose.yml` 注释）。
+  2. 压测工具早期版本漏写 `INSERT ... VALUES` 的 `VALUES` 关键字，会让用例恒为 `WRONG_ANSWER`，
+     并在高并发下放大成 `ERROR`；现工具已修正，并会把服务端 `error_message` 一并打印，便于一眼定位失败原因。
+- 需要更大容量时：按「单请求 DB CPU ÷ 配额」估算继续放宽 `cpu_quota`（单请求 DB CPU ≈ 3.6 ms/1 用例）；
+  若必须维持低配额，建议加**准入控制**（限制在途请求数、超出快速返回「服务繁忙」），而不是让延迟堆到 10 秒级。
+
