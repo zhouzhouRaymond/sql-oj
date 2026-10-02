@@ -18,11 +18,11 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>统计分析</span>
         </el-menu-item>
-        <el-menu-item index="/submissions">
+        <el-menu-item index="/teacher/submissions">
           <el-icon><Tickets /></el-icon>
           <span>提交记录</span>
         </el-menu-item>
-        <el-menu-item index="/profile">
+        <el-menu-item index="/teacher/profile">
           <el-icon><User /></el-icon>
           <span>个人中心</span>
         </el-menu-item>

@@ -1,7 +1,7 @@
 <template>
   <div class="submissions-container">
     <div class="header">
-      <el-button @click="goBack">← 返回</el-button>
+      <el-button v-if="!inTeacherLayout" @click="goBack">← 返回</el-button>
       <div class="header-title">
         <!-- 教师进入本页看到的是全班提交，标题随之区分 -->
         <h1>{{ userStore.isTeacher ? '📝 学生提交记录' : '📝 我的提交记录' }}</h1>
@@ -126,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
@@ -138,6 +138,10 @@ import SubmissionCaseDetail from '../components/SubmissionCaseDetail.vue'
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+// 教师端菜单通过 /teacher/submissions 把它嵌在布局里（侧边栏即导航），
+// 此时不需要「返回」按钮；学生端是独立页面，仍显示「返回」。
+const inTeacherLayout = computed(() => route.path.startsWith('/teacher'))
 
 const submissions = ref<any[]>([])
 const loading = ref(false)

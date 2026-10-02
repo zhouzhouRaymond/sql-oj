@@ -2,7 +2,7 @@
   <div class="profile-container">
     <div class="header">
       <h1>👤 个人中心</h1>
-      <el-button @click="goBack">← 返回</el-button>
+      <el-button v-if="!inTeacherLayout" @click="goBack">← 返回</el-button>
     </div>
 
     <div class="profile-content">
@@ -193,7 +193,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
 import { updateUser, getUserStats, changePassword } from '../api/users'
@@ -202,7 +202,11 @@ import { statusTagType } from '../utils/status'
 import { formatDateTime, formatRelativeTime } from '../utils/time'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
+
+// 教师端菜单通过 /teacher/profile 把它嵌在布局里（侧边栏即导航），此时不需要「返回」按钮
+const inTeacherLayout = computed(() => route.path.startsWith('/teacher'))
 
 const isTeacher = computed(() => userStore.user?.user_type === 'teacher')
 

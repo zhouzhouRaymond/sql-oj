@@ -32,13 +32,15 @@ const router = createRouter({
       component: () => import('../views/student/ExamList.vue'),
       meta: { requiresAuth: true, allowedRoles: ['student', 'teacher'] }
     },
+    // 学生端的「我的提交」/「个人中心」共用页面（学生 / 教师均可访问）。
+    // 教师端菜单走 /teacher/submissions、/teacher/profile（见下方 /teacher 子路由），
+    // 这两个顶层路由保留给学生，以及从学生端页面跳转进来时使用（带 ?from= 可原路返回）。
     {
       path: '/submissions',
       name: 'MySubmissions',
       component: () => import('../views/MySubmissions.vue'),
       meta: { requiresAuth: true, allowedRoles: ['student', 'teacher'] }
     },
-    // 在学生端路由中添加
     {
       path: '/profile',
       name: 'Profile',
@@ -92,6 +94,18 @@ const router = createRouter({
           path: 'accounts',
           name: 'AccountManage',
           component: () => import('../views/teacher/AccountManage.vue')
+        },
+        // 与学生端共用同一页面组件，但渲染在教师布局内：点击菜单后侧边栏常驻，
+        // 与「题目管理 / 考试管理 / 统计分析 / 账号管理」的打开方式保持一致。
+        {
+          path: 'submissions',
+          name: 'TeacherSubmissions',
+          component: () => import('../views/MySubmissions.vue')
+        },
+        {
+          path: 'profile',
+          name: 'TeacherProfile',
+          component: () => import('../views/Profile.vue')
         },
         {
           path: '',
