@@ -25,3 +25,8 @@ judge_service
 
 # 本地导出/打包产物（如 ARM64 镜像 tar 体积很大，不应进入构建上下文）
 dist
+
+# 文档与截图：只在仓库里用，运行镜像不需要
+README.md
+docs
+images

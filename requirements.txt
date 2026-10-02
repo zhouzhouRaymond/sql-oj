@@ -4,5 +4,7 @@ djangorestframework-simplejwt>=5.3
 django-cors-headers>=4.3
 django-filter>=23.0
 PyMySQL>=1.1
+# PyMySQL 连接 MySQL 8.4 默认的 caching_sha2_password 认证所必需
+cryptography>=42.0
 sqlparse>=0.5
 requests>=2.31

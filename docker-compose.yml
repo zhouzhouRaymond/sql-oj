@@ -118,8 +118,9 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      # 判题服务带 HEALTHCHECK（探测 /health），这里等它真正可接单再启动后端
       judge-service:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8000:8000"
     restart: unless-stopped
