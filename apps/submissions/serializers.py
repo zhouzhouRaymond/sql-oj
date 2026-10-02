@@ -4,8 +4,9 @@ from .models import Submission
 
 class SubmissionSerializer(serializers.ModelSerializer):
     """提交详情：包含 submitted_sql 与判题用例明细（前端点开详情时按需懒加载）"""
-    # 展示用用户名（自定义用户名，为空时后端回退为登录名）
+    # 展示用用户名（自定义用户名，为空时后端回退为登录名）与登录名
     student_name = serializers.CharField(source='student.name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
     question_title = serializers.CharField(source='question.title', read_only=True)
     question_desc = serializers.CharField(source='question.description', read_only=True)
     # 判题用例明细：只回显「未通过的用例」（序号 + 实际输出 + 错误信息）。
@@ -72,15 +73,17 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 class SubmissionListSerializer(serializers.ModelSerializer):
     """提交列表：不返回体积较大的 submitted_sql，需要时再按 id 请求详情"""
-    # 展示用用户名（自定义用户名，为空时后端回退为登录名）
+    # 展示用用户名（自定义用户名，为空时后端回退为登录名）与登录名
     student_name = serializers.CharField(source='student.name', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
     question_title = serializers.CharField(source='question.title', read_only=True)
     question_desc = serializers.CharField(source='question.description', read_only=True)
 
     class Meta:
         model = Submission
         fields = (
-            'id', 'student', 'student_name', 'question', 'question_title', 'question_desc',
+            'id', 'student', 'student_name', 'student_username',
+            'question', 'question_title', 'question_desc',
             'exam', 'execution_status', 'score', 'submission_time',
         )
         read_only_fields = (

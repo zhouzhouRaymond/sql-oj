@@ -34,20 +34,20 @@
           </template>
         </el-table-column>
         <!-- 教师查看全部提交时显示提交人（学生只能看到自己的提交） -->
-        <el-table-column v-if="userStore.isTeacher" label="学生" min-width="140">
+        <el-table-column v-if="userStore.isTeacher" label="学生" min-width="160">
           <template #default="{ row }">
-            <div>{{ row.student_name || `学生 #${row.student}` }}</div>
-            <div class="q-sub">#{{ row.student }}</div>
+            <!-- 用户名（展示名）+ 登录名：同名用户可据此区分 -->
+            <div>{{ row.student_name || row.student_username || `学生 #${row.student}` }}</div>
+            <div class="q-sub">{{ row.student_username || `#${row.student}` }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="120" align="center">
+        <el-table-column label="状态" min-width="140" align="center">
           <template #default="{ row }">
-            <!-- 中文标签更易读，悬停可看后端原始状态码 -->
-            <el-tooltip :content="row.execution_status || 'PENDING'" placement="top">
-              <el-tag :type="statusTagType(row.execution_status)" size="small">
-                {{ statusText(row.execution_status) }}
-              </el-tag>
-            </el-tooltip>
+            <!-- 中文标签 + 原始状态码（便于与接口 / 日志对账） -->
+            <el-tag :type="statusTagType(row.execution_status)" size="small">
+              {{ statusText(row.execution_status) }}
+            </el-tag>
+            <div class="status-code">{{ row.execution_status || 'PENDING' }}</div>
           </template>
         </el-table-column>
         <el-table-column label="得分" min-width="90" align="center">
@@ -95,10 +95,15 @@
         <el-descriptions-item label="来源">
           {{ currentDetail.exam ? `考试 #${currentDetail.exam}` : '练习' }}
         </el-descriptions-item>
+        <el-descriptions-item v-if="userStore.isTeacher" label="提交人">
+          {{ currentDetail.student_name || currentDetail.student_username || '-' }}
+          <span class="q-sub">{{ currentDetail.student_username || '' }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="判题状态">
           <el-tag :type="statusTagType(currentDetail.execution_status)" size="small">
             {{ statusText(currentDetail.execution_status) }}
           </el-tag>
+          <span class="status-code">{{ currentDetail.execution_status || 'PENDING' }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="得分">{{ currentDetail.score ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="提交 ID">#{{ currentDetail.id }}</el-descriptions-item>
@@ -303,6 +308,13 @@ onUnmounted(() => {
 }
 .muted {
   color: #a8abb2;
+}
+/* 原始状态码：等宽小字，与中文标签并列展示便于对账 */
+.status-code {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #a8abb2;
+  line-height: 1.4;
 }
 .score {
   font-size: 16px;

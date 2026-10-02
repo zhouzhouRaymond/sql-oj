@@ -88,3 +88,13 @@ class ExamSubmissionFilterTests(APITestCase):
         resp = self.client.get('/api/submissions/', {'exam': 'abc'})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_list_exposes_student_login_name(self):
+        """教师端列表需要同时拿到学生用户名与登录名（用于区分同名用户）。"""
+        self._submit(self.exam)
+        self.client.force_authenticate(self.teacher)
+        resp = self.client.get('/api/submissions/', {'exam': self.exam.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        row = resp.data['results'][0]
+        self.assertEqual(row['student_name'], self.student.name)
+        self.assertEqual(row['student_username'], self.student.username)
+
