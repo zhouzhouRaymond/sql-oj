@@ -71,122 +71,10 @@
       <div class="detail-item">
         <strong>得分：</strong>{{ currentDetail.score ?? 0 }}
       </div>
-      <!-- 判题明细：未通过的测试用例（后端仅返回序号 + 实际输出 + 错误信息） -->
-      <div class="detail-item" v-if="currentDetail.judge_details">
-        <strong>
-          {{ currentDetail.execution_status === 'ACCEPTED' ? '✅ 用例通过情况：' : '❌ 失败的测试用例：' }}
-        </strong>
-        <div v-if="currentDetail.judge_details.error_message" class="detail-error">
-          {{ currentDetail.judge_details.error_message }}
-        </div>
-        <div class="detail-summary">
-          共 {{ currentDetail.judge_details.total }} 个测试用例，通过
-          {{ currentDetail.judge_details.passed_count }} 个。
-        </div>
-        <div
-          v-for="caseItem in failedCaseViews"
-          :key="caseItem.index"
-          class="failed-case"
-        >
-          <div class="failed-case-title">
-            <el-tag type="danger" size="small">用例 {{ caseItem.index }}</el-tag>
-            <span class="case-hint">{{ caseItem.error_message || '执行结果与预期不一致' }}</span>
-          </div>
-
-          <template v-if="caseItem.test_input != null">
-            <span class="case-label">测试输入（用例数据）：</span>
-            <pre class="sql-detail">{{ caseItem.test_input || '（空）' }}</pre>
-          </template>
-
-          <span class="case-label">你的输出：</span>
-          <div v-if="caseItem.actualTable.columns.length > 0" class="result-table-wrap">
-            <el-table
-              :data="caseItem.actualTable.rows"
-              border
-              size="small"
-              :style="{ minWidth: tableMinWidth(caseItem.actualTable) }"
-            >
-              <el-table-column
-                v-for="col in caseItem.actualTable.columns"
-                :key="col.prop"
-                :prop="col.prop"
-                :label="col.label"
-                min-width="120"
-              />
-            </el-table>
-          </div>
-          <pre v-else class="sql-detail">{{ caseItem.actual_output || '（空）' }}</pre>
-
-          <template v-if="caseItem.expected_output != null">
-            <span class="case-label">预期输出：</span>
-            <div
-              v-if="caseItem.expectedTable.columns.length > 0"
-              class="result-table-wrap"
-            >
-              <el-table
-                :data="caseItem.expectedTable.rows"
-                border
-                size="small"
-                :style="{ minWidth: tableMinWidth(caseItem.expectedTable) }"
-              >
-                <el-table-column
-                  v-for="col in caseItem.expectedTable.columns"
-                  :key="col.prop"
-                  :prop="col.prop"
-                  :label="col.label"
-                  min-width="120"
-                />
-              </el-table>
-            </div>
-            <pre v-else class="sql-detail">{{ caseItem.expected_output || '（空）' }}</pre>
-          </template>
-        </div>
-        <div v-if="!caseDataShown" class="detail-summary">
-          为保护隐藏用例，此处不展示用例的输入与预期输出。
-        </div>
+      <!-- 判题明细（失败用例 / 运行结果）：与教师端提交记录共用同一组件 -->
+      <div class="detail-item">
+        <SubmissionCaseDetail :detail="currentDetail" />
       </div>
-      <!-- ✅ 答对时直接展示运行结果（表格可能很宽，已支持横向滚动） -->
-      <div
-        class="detail-item"
-        v-if="currentDetail.execution_status === 'ACCEPTED' && caseOutputs.length > 0"
-      >
-        <strong>📤 运行结果：</strong>
-        <el-radio-group
-          v-if="caseOutputs.length > 1"
-          v-model="activeCaseIndex"
-          size="small"
-          class="case-output-tabs"
-        >
-          <el-radio-button
-            v-for="item in caseOutputs"
-            :key="item.index"
-            :value="item.index"
-          >
-            用例 {{ item.index }}
-          </el-radio-button>
-        </el-radio-group>
-        <div class="result-table-wrap">
-          <el-table
-            :data="resultTable.rows"
-            border
-            stripe
-            size="small"
-            :style="{ minWidth: tableMinWidth(resultTable) }"
-          >
-            <el-table-column
-              v-for="col in resultTable.columns"
-              :key="col.prop"
-              :prop="col.prop"
-              :label="col.label"
-              min-width="120"
-            />
-          </el-table>
-        </div>
-        <div v-if="resultTable.rows.length === 0" class="detail-summary">
-          查询结果为 0 行。
-        </div>
-      </div>
-
       <div class="detail-item" v-if="currentDetail.submission_time || currentDetail.created_at">
         <strong>提交时间：</strong>
         {{ formatDateTime(currentDetail.submission_time || currentDetail.created_at) }}
@@ -196,13 +84,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../../stores/user'
 import { getSubmission, getSubmissions } from '../../api/submissions'
 import { formatDateTime, formatRelativeTime } from '../../utils/time'
-import { parseResultSet } from '../../utils/resultSet'
+import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -218,37 +106,6 @@ const total = ref(0)
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const currentDetail = ref<any>({})
-
-// 答对时展示运行结果：把判题返回的结果集文本解析成表格
-const caseOutputs = computed(() => {
-  const details = currentDetail.value?.judge_details
-  return Array.isArray(details?.case_outputs) ? details.case_outputs : []
-})
-const activeCaseIndex = ref(1)
-const currentCaseOutput = computed(() => {
-  const item = caseOutputs.value.find((c: any) => c.index === activeCaseIndex.value)
-  return item?.actual_output || ''
-})
-const resultTable = computed(() => parseResultSet(currentCaseOutput.value))
-// 表格最小宽度：列多时保持宽度，由外层容器横向滚动
-const tableMinWidth = (table: { columns: unknown[] }) =>
-  `${Math.max((table?.columns?.length || 0) * 140, 320)}px`
-
-// 失败用例的展示数据：把「你的输出 / 预期输出」解析成表格
-const failedCaseViews = computed(() => {
-  const list = currentDetail.value?.judge_details?.failed_cases
-  return (Array.isArray(list) ? list : []).map((item: any) => ({
-    ...item,
-    actualTable: parseResultSet(item.actual_output || ''),
-    expectedTable: parseResultSet(item.expected_output || '')
-  }))
-})
-
-// 后端是否下发了用例输入/预期输出（题目开关开启或当前是教师）
-const caseDataShown = computed(() => {
-  const list = currentDetail.value?.judge_details?.failed_cases
-  return (Array.isArray(list) ? list : []).some((item: any) => item.test_input != null)
-})
 
 // 用于让「相对时间」随时间自动刷新
 const nowTick = ref(Date.now())
@@ -291,7 +148,6 @@ const viewDetail = async (row: any) => {
   if (!row?.id) return
   detailVisible.value = true
   detailLoading.value = true
-  activeCaseIndex.value = 1
   currentDetail.value = row
   try {
     const res = await getSubmission(row.id)
@@ -357,55 +213,6 @@ onUnmounted(() => {
   margin: 4px 0 0 0;
   max-height: 200px;
   overflow-y: auto;
-}
-
-/* 判题明细：未通过的测试用例 */
-.detail-summary {
-  color: #606266;
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-.detail-error {
-  color: #e6a23c;
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-.failed-case {
-  background-color: #fef0f0;
-  border: 1px solid #fde2e2;
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-}
-.failed-case-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.case-hint {
-  color: #f56c6c;
-  font-size: 13px;
-}
-.case-label {
-  display: block;
-  margin-top: 6px;
-  font-size: 13px;
-  color: #606266;
-}
-
-/* ✅ 答对时的运行结果：宽表格交给外层容器横向滚动 */
-.case-output-tabs {
-  margin: 6px 0;
-}
-.result-table-wrap {
-  margin-top: 6px;
-  overflow-x: auto;
-  border-radius: 6px;
-}
-.result-table-wrap .el-table {
-  border-radius: 6px;
 }
 
 /* ===== 窄窗口自适应 ===== */

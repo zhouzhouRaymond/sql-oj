@@ -166,14 +166,24 @@
 
           <!-- 🏆 该时间段内本题的学生通过率排名 -->
           <div v-loading="statsLoading" class="ranking-block">
-            <h4 class="ranking-title">🏆 学生通过率排名（本题 · 当前时间段）</h4>
+            <h4 class="ranking-title">
+              🏆 学生通过率排名（本题 · 当前时间段）
+              <span class="ranking-tip">点击学生姓名可查看其提交记录</span>
+            </h4>
             <el-table v-if="ranking.length > 0" :data="ranking" stripe size="small" max-height="320">
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ $index }">
                   <span :class="{ 'top-rank': $index < 3 }">{{ $index + 1 }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="student_name" label="学生" min-width="120" />
+              <el-table-column label="学生" min-width="120">
+                <template #default="{ row }">
+                  <!-- 点击学生姓名 → 查看该学生本时间段内本题的提交记录 -->
+                  <el-button type="primary" link @click="openStudentSubmissions(row)">
+                    {{ row.student_name }}
+                  </el-button>
+                </template>
+              </el-table-column>
               <el-table-column label="通过率" width="160">
                 <template #default="{ row }">
                   <el-progress :percentage="row.passRatePercent" :stroke-width="8" />
@@ -194,6 +204,81 @@
         </div>
       </el-card>
     </div>
+
+    <!-- 👤 学生提交记录下钻：点排名表中的学生姓名打开（时间段与上方统计口径一致） -->
+    <el-dialog
+      v-model="studentDialogVisible"
+      :title="studentDialogTitle"
+      width="880px"
+      top="8vh"
+      @closed="resetStudentDialog"
+    >
+      <div class="student-sub-summary">
+        <span>该时间段内提交次数：<b>{{ currentStudent.total }}</b></span>
+        <span>通过提交数：<b>{{ currentStudent.accepted }}</b></span>
+        <span>通过率：<b>{{ currentStudent.passRatePercent }}%</b></span>
+        <span>时间段：{{ appliedRangeText }}</span>
+      </div>
+
+      <el-table
+        v-loading="studentSubLoading"
+        :data="studentSubmissions"
+        :row-key="(row: any) => row.id"
+        stripe
+        size="small"
+        max-height="440"
+        @expand-change="onRowExpand"
+      >
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="expand-detail">
+              <div class="expand-item">
+                <strong>提交的 SQL：</strong>
+                <pre class="sql-block">{{ row.__loading ? '加载中…' : (row.submitted_sql || '（空）') }}</pre>
+              </div>
+              <!-- 与「我的提交记录」共用同一判题明细组件（表格化展示） -->
+              <SubmissionCaseDetail v-if="!row.__loading" :detail="row" />
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id" label="提交ID" width="90" />
+        <el-table-column label="状态" width="130">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.execution_status)">
+              {{ row.execution_status || 'PENDING' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="score" label="得分" width="80" />
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">
+            <span>{{ row.exam ? `考试 #${row.exam}` : '练习' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="提交时间" min-width="160">
+          <template #default="{ row }">
+            <span :title="formatDateTime(row.submission_time)">
+              {{ formatDateTime(row.submission_time) }}
+            </span>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-if="!studentSubLoading && studentSubmissions.length === 0" class="ranking-empty">
+        该时间段内该学生没有本题的提交记录
+      </div>
+
+      <div class="pagination">
+        <el-pagination
+          v-model:current-page="studentSubPage"
+          :page-size="studentSubPageSize"
+          :total="studentSubTotal"
+          layout="prev, pager, next"
+          @current-change="loadStudentSubmissions"
+        />
+      </div>
+      <div class="ranking-tip">提示：展开某一行可查看该次提交的 SQL 与判题明细</div>
+    </el-dialog>
   </div>
 </template>
 
@@ -204,7 +289,10 @@ import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
 import { getQuestionSubmissionStats } from '../../api/stats'
+import { getSubmission, getSubmissions } from '../../api/submissions'
+import { formatDateTime } from '../../utils/time'
 import { parseResultSet } from '../../utils/resultSet'
+import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -266,6 +354,8 @@ const dateShortcuts = [
 
 // 本次统计实际生效的时间段 / 刷新时刻 / 是否已加载过
 const appliedRange = ref<{ start: string; end: string } | null>(null)
+// 本次统计实际生效的时间段原始值：下钻「学生提交记录」时按同一时间窗过滤
+const appliedRangeRaw = ref<{ start: string; end: string } | null>(null)
 const lastUpdated = ref('')
 const statsLoaded = ref(false)
 
@@ -357,6 +447,9 @@ const loadStats = async (force = false) => {
     appliedRange.value = data.start
       ? { start: formatServerTime(data.start), end: formatServerTime(data.end) }
       : null
+    appliedRangeRaw.value = data.start
+      ? { start: String(data.start), end: String(data.end || '') }
+      : null
     ranking.value = normalizeRanking(data.student_ranking)
     statsAppliedKey = key
     statsLoaded.value = true
@@ -369,6 +462,94 @@ const loadStats = async (force = false) => {
       statsInFlightKey = ''
     }
   }
+}
+
+// 👤 学生提交记录下钻：点排名表中的学生姓名，查看该学生本时间段内本题的提交
+const studentDialogVisible = ref(false)
+const studentSubLoading = ref(false)
+const studentSubPage = ref(1)
+const studentSubPageSize = 20
+const studentSubTotal = ref(0)
+const studentSubmissions = ref<any[]>([])
+const currentStudent = ref<any>({
+  student_id: 0,
+  student_name: '',
+  total: 0,
+  accepted: 0,
+  passRatePercent: 0
+})
+
+const studentDialogTitle = computed(
+  () => `${currentStudent.value.student_name || '学生'} · 本题提交记录（${appliedRangeText.value}）`
+)
+
+const statusTagType = (status: string) => {
+  switch (status) {
+    case 'ACCEPTED': return 'success'
+    case 'WRONG_ANSWER': return 'danger'
+    case 'TIMEOUT': return 'warning'
+    default: return 'info'
+  }
+}
+
+const openStudentSubmissions = (row: any) => {
+  if (!row?.student_id) return
+  currentStudent.value = row
+  studentSubPage.value = 1
+  studentDialogVisible.value = true
+  loadStudentSubmissions()
+}
+
+// 拉取该学生在「本次统计生效时间段」内本题的提交列表
+const loadStudentSubmissions = async () => {
+  studentSubLoading.value = true
+  try {
+    const res = await getSubmissions({
+      question_id: questionId.value,
+      student_id: currentStudent.value.student_id,
+      start: appliedRangeRaw.value?.start || undefined,
+      end: appliedRangeRaw.value?.end || undefined,
+      page: studentSubPage.value
+    })
+    studentSubmissions.value = (res.data.results || []).map((row: any) => ({
+      ...row,
+      __loading: false,
+      __loaded: false
+    }))
+    studentSubTotal.value = res.data.count || 0
+  } catch (error) {
+    ElMessage.error('加载该学生的提交记录失败')
+  } finally {
+    studentSubLoading.value = false
+  }
+}
+
+// 展开某一行时才按 id 懒加载完整详情（列表接口不返回 submitted_sql 与判题明细）
+const onRowExpand = async (row: any, expandedRows?: any) => {
+  const expanded: any[] = Array.isArray(expandedRows) ? expandedRows : []
+  if (!expanded.some((item: any) => item?.id === row?.id)) return
+  if (row.__loaded || row.__loading) return
+  row.__loading = true
+  try {
+    const res = await getSubmission(row.id)
+    const detail = res.data || {}
+    row.submitted_sql = detail.submitted_sql || ''
+    row.judge_details = detail.judge_details || null
+    row.execution_status = detail.execution_status || row.execution_status
+    row.score = detail.score ?? row.score
+    row.__loaded = true
+  } catch (error) {
+    ElMessage.error('加载提交详情失败')
+  } finally {
+    row.__loading = false
+  }
+}
+
+// 关闭弹窗时清空，避免下次打开先看到上一个学生的数据
+const resetStudentDialog = () => {
+  studentSubmissions.value = []
+  studentSubTotal.value = 0
+  studentSubPage.value = 1
 }
 
 // ✅ 配置 marked 渲染选项
@@ -767,6 +948,41 @@ onUnmounted(() => {
   color: #e6a23c;
 }
 
+/* 👤 学生提交记录下钻弹窗 */
+.student-sub-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+  color: #606266;
+  font-size: 13px;
+}
+.student-sub-summary b {
+  color: #409eff;
+}
+.expand-detail {
+  padding: 8px 12px;
+  background-color: #f7fafc;
+  border-radius: 6px;
+}
+.expand-item {
+  margin-bottom: 8px;
+}
+.expand-detail .sql-block {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.pagination {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+.ranking-tip {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 12px;
+  color: #909399;
+}
 /* ===== 窄窗口自适应 ===== */
 @media (max-width: 768px) {
   .teacher-question-detail {

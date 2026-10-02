@@ -7,6 +7,7 @@ from django.db.models import Count, Q, Avg, Max, Sum
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from .models import Submission
 from .serializers import SubmissionSerializer, SubmissionListSerializer
@@ -20,6 +21,14 @@ from apps.users.permissions import IsTeacher
 # 只给日期（2026-10-02）或只精确到分钟（2026-10-02 10:30）
 _DATE_ONLY_RE = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}$')
 _MINUTE_ONLY_RE = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}[T ]\d{1,2}:\d{1,2}$')
+
+
+def _to_int(raw, field):
+    """把查询参数转成整数；非法值返回 400，避免直接抛 ValueError 变成 500"""
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError({field: '必须为整数'})
 
 
 def _parse_time_range(start_raw, end_raw):
@@ -81,6 +90,24 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             qs = qs.filter(
                 Q(student__user_type='student') | Q(student=self.request.user)
             )
+
+        # 可选过滤：按题目 / 学生 / 时间段收窄（教师端「学生提交记录」下钻用）
+        # 学生视角在上面已限定为「本人提交」，这里的 student_id 只会进一步收窄，
+        # 因此不会借此看到他人提交。
+        question_id = self.request.query_params.get('question_id')
+        if question_id:
+            qs = qs.filter(question_id=_to_int(question_id, 'question_id'))
+        student_id = self.request.query_params.get('student_id')
+        if student_id:
+            qs = qs.filter(student_id=_to_int(student_id, 'student_id'))
+        start, end = _parse_time_range(
+            self.request.query_params.get('start'),
+            self.request.query_params.get('end'),
+        )
+        if start:
+            qs = qs.filter(submission_time__gte=start)
+        if end:
+            qs = qs.filter(submission_time__lte=end)
         return qs
 
     @action(detail=False, methods=['post'])
