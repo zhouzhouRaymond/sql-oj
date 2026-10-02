@@ -13,25 +13,13 @@
       >
         📝 我的提交
       </el-button>
-      <!-- 专注模式：收起左侧题目面板，让编辑器与判题结果占满整宽 -->
-      <el-button
-        size="small"
-        title="收起 / 展开左侧题目面板"
-        @click="toggleLeftColumn"
-      >
-        {{ leftCollapsed ? '📖 显示题目' : '🎯 专注模式' }}
-      </el-button>
     </div>
 
     <!-- 主要内容 -->
     <div v-loading="loading" class="content">
       <div ref="columnsRef" class="content-columns">
-        <!-- 左栏：题目信息（可拖动分隔条调宽，可折叠为专注模式） -->
-        <div
-          v-if="!leftCollapsed"
-          class="column-left"
-          :style="{ flexGrow: leftRatio }"
-        >
+        <!-- 左栏：题目信息（可拖动分隔条调宽） -->
+        <div class="column-left" :style="{ flexGrow: leftRatio }">
 
           <!-- 题目信息卡片 -->
           <el-card class="question-info">
@@ -84,7 +72,6 @@
         </div>
         <!-- 拖拽分隔条：调整左右栏宽度（双击恢复均分，宽度会被记住） -->
         <div
-          v-if="!leftCollapsed"
           class="splitter"
           title="拖动调整左右栏宽度，双击恢复均分"
           @pointerdown.prevent="startResize"
@@ -491,7 +478,7 @@ const caseDataShown = computed(() =>
   failedCases.value.some((item: any) => item.test_input != null)
 )
 
-// ===== 布局：拖动分隔条记忆栏宽 + 专注模式（收起左栏） =====
+// ===== 布局：拖动分隔条调整两栏宽度，并记住栏宽 =====
 const LAYOUT_STORAGE_KEY = 'sql-oj:question-detail-layout'
 // 分隔条宽度与两栏间距（需与下方 CSS 保持一致，用于换算拖拽比例）
 const SPLITTER_WIDTH = 10
@@ -504,8 +491,6 @@ const STACK_BREAKPOINT = 992
 const columnsRef = ref<HTMLElement | null>(null)
 // 左栏宽度占比（默认均分）；拖动分隔条后写入 localStorage，下次访问仍然生效
 const leftRatio = ref(0.5)
-// 专注模式：收起左栏让编辑器与判题结果占满整宽（仅本次会话有效，避免下次打开看不到题目）
-const leftCollapsed = ref(false)
 let resizing = false
 
 const saveLayout = () => {
@@ -574,14 +559,7 @@ const resetRatio = () => {
   saveLayout()
 }
 
-// 专注模式开关：折叠/展开左栏，正在拖拽时先结束拖拽
-const toggleLeftColumn = () => {
-  leftCollapsed.value = !leftCollapsed.value
-  stopResize()
-}
-
-onMounted(() => {
-  loadQuestion()
+onMounted(() => {  loadQuestion()
   loadLayout()
 })
 
