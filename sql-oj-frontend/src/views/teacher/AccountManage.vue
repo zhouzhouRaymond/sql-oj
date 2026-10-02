@@ -74,16 +74,24 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination">
-        <el-pagination
-          v-model:current-page="currentPage"
-          :page-size="pageSize"
-          :total="total"
-          layout="prev, pager, next, total"
-          small
-          @current-change="loadUsers()"
-        />
+      <!-- 底部加载状态：与题目列表一致，滚动到这里自动加载下一页 -->
+      <div v-if="users.length > 0 || loading" class="load-more">
+        <template v-if="loadingMore">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>正在加载更多账号…</span>
+        </template>
+        <template v-else-if="loadError">
+          <span>加载失败，</span>
+          <el-button type="primary" link size="small" @click="retryLoad">点击重试</el-button>
+        </template>
+        <template v-else-if="finished">
+          <span>🎉 已加载全部 {{ total }} 个账号</span>
+        </template>
+        <template v-else>
+          <span>下滑加载更多…</span>
+        </template>
       </div>
+      <div v-else class="empty-hint">暂无账号</div>
     </el-card>
 
     <!-- 新建 / 编辑账号 -->
@@ -134,20 +142,25 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { createUser, getUsers, updateUserById } from '../../api/users'
 import { formatDateTime } from '../../utils/time'
 
 const users = ref<any[]>([])
-const loading = ref(false)
+const loading = ref(false)      // 首屏 / 重置加载
+const loadingMore = ref(false)  // 触底加载下一页
+const finished = ref(false)     // 是否已加载完全部账号
+const loadError = ref(false)    // 上一次加载是否失败
 const saving = ref(false)
 const keyword = ref('')
 const roleFilter = ref('')
 const currentPage = ref(1)
-const pageSize = 20
-const total = ref(0)
+const total = ref(0)            // 账号总数（以后端 count 为准）
+
+// 触底加载：滚动监听节流用
+let scrollRafId = 0
 
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
@@ -159,10 +172,26 @@ const form = ref({
   password: ''
 })
 
-// 加载账号列表（reset=true 时回到第 1 页）
+/**
+ * 加载账号列表：reset=true 时重新从第 1 页拉取，否则追加下一页。
+ * 后端按 id 升序返回，每页 20 条（与题目列表一致）。
+ */
 const loadUsers = async (reset = false) => {
-  if (reset) currentPage.value = 1
-  loading.value = true
+  if (reset) {
+    users.value = []
+    currentPage.value = 1
+    finished.value = false
+    loadError.value = false
+  }
+  if (loading.value || loadingMore.value || finished.value || loadError.value) return
+
+  const isFirstPage = currentPage.value === 1
+  if (isFirstPage) loading.value = true
+  else loadingMore.value = true
+
+  // 记录当前滚动位置：数据渲染完成后恢复，避免加载后页面跳到最底端
+  const anchorScrollY = window.scrollY
+
   try {
     const res = await getUsers({
       page: currentPage.value,
@@ -170,18 +199,66 @@ const loadUsers = async (reset = false) => {
       user_type: roleFilter.value || undefined
     })
     const data = res.data || {}
-    if (Array.isArray(data)) {
-      users.value = data
-      total.value = data.length
+    // 兼容后端未开启分页（直接返回数组）的情况
+    const list = Array.isArray(data) ? data : (data.results || [])
+    if (isFirstPage) {
+      users.value = list
     } else {
-      users.value = data.results || []
-      total.value = data.count || 0
+      // 追加时按 id 去重，避免重复请求导致同一账号出现两次
+      const seen = new Set(users.value.map((item) => item.id))
+      users.value = [...users.value, ...list.filter((item) => !seen.has(item.id))]
+    }
+    // 总数以后端返回的 count 为准（列表长度只代表“已加载”的数量）
+    total.value = data.count ?? users.value.length
+
+    // 没有下一页（或本页为空）→ 已加载全部
+    if (Array.isArray(data) || !data.next || list.length === 0) {
+      finished.value = true
+    } else {
+      currentPage.value += 1
     }
   } catch (error: any) {
+    // 失败时不要标记为“已全部加载”，底部会给出「点击重试」
+    loadError.value = true
     ElMessage.error(error.response?.data?.detail || '加载账号列表失败')
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+
+  // 等新数据渲染完成后再恢复滚动位置，保证「停在原来的位置」
+  await nextTick()
+  window.scrollTo(0, anchorScrollY)
+
+  // 内容不足一屏（刚加载完底部仍在视口内）时，继续加载下一页
+  if (!finished.value && !loadError.value && !loading.value && !loadingMore.value && nearBottom()) {
+    loadMore()
+  }
+}
+
+// 触底时加载下一页
+const loadMore = () => loadUsers(false)
+
+// 加载失败后手动重试当前页
+const retryLoad = () => {
+  loadError.value = false
+  loadMore()
+}
+
+// 是否已滚动到接近页面底部
+const nearBottom = (threshold = 200) => {
+  const el = document.documentElement
+  return window.scrollY + el.clientHeight >= el.scrollHeight - threshold
+}
+
+// 滚动监听（requestAnimationFrame 节流）：接近底部时加载下一页
+const onScroll = () => {
+  if (scrollRafId) return
+  scrollRafId = window.requestAnimationFrame(() => {
+    scrollRafId = 0
+    if (finished.value || loadError.value || loading.value || loadingMore.value) return
+    if (nearBottom()) loadMore()
+  })
 }
 
 const openCreate = () => {
@@ -273,9 +350,11 @@ const toggleActive = (row: any) => {
     { confirmButtonText: `确定${action}`, cancelButtonText: '取消', type: 'warning' }
   ).then(async () => {
     try {
-      await updateUserById(row.id, { is_active: !row.is_active })
+      const res = await updateUserById(row.id, { is_active: !row.is_active })
+      // 就地更新该行，避免整表重载导致滚动位置跳动
+      const index = users.value.findIndex((item) => item.id === row.id)
+      if (index >= 0) users.value[index] = { ...users.value[index], ...(res.data || {}) }
       ElMessage.success(`已${action} ✅`)
-      await loadUsers()
     } catch (error: any) {
       ElMessage.error(error.response?.data?.detail || `${action}失败，请重试`)
     }
@@ -283,7 +362,16 @@ const toggleActive = (row: any) => {
 }
 
 onMounted(() => {
-  loadUsers()
+  loadUsers(true)
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onScroll)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onScroll)
+  if (scrollRafId) window.cancelAnimationFrame(scrollRafId)
+  scrollRafId = 0
 })
 </script>
 
@@ -292,6 +380,8 @@ onMounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
+  /* 追加数据时禁用浏览器「滚动锚定」，避免视图被拉到最底端 */
+  overflow-anchor: none;
 }
 .header {
   display: flex;
@@ -322,10 +412,23 @@ onMounted(() => {
 .account-manage :deep(.el-table .cell) {
   font-size: 13px;
 }
-.pagination {
-  margin-top: 12px;
+/* 触底加载提示（与题目列表一致） */
+.load-more {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* 固定高度：提示文案切换时高度不变，避免布局抖动 */
+  min-height: 46px;
+  padding: 18px 0 8px;
+  color: #909399;
+  font-size: 13px;
+}
+.empty-hint {
+  text-align: center;
+  color: #c0c4cc;
+  padding: 40px 0;
+  font-size: 14px;
 }
 
 /* ===== 窄窗口自适应 ===== */
