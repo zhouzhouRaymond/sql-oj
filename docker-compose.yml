@@ -41,13 +41,20 @@ services:
       # 挂载初始化脚本：每次重建（tmpfs）都会执行，完成权限收敛与 public 隔离
       - ./judge_service/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs:
-      - /var/lib/postgresql/data:rw,noexec,nosuid,size=256m
+      # 数据目录给足空间：PostgreSQL 默认 max_wal_size=1GB，判题的建表/回滚会产生大量 WAL，
+      # 256MB 时持续压测会把 tmpfs 写满（could not write to file "pg_wal/..."），
+      # 数据库随即崩溃重启、连接被污染，表现为判题批量 ERROR。故放宽到 1GB。
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=1g
       - /var/run/postgresql:rw,noexec,nosuid,size=16m
       - /tmp:rw,noexec,nosuid,size=64m
       - /dev/shm:rw,noexec,nosuid,size=64m
-    mem_limit: 512m
+    # 资源上限：CPU 2 核 / 内存 1G / 进程数 64。
+    # 用 judge_service/load_test.py 压测可知判题吞吐由本容器的 CPU 配额决定：
+    # 0.5 核时轻用例封顶约 110 req/s 且并发无收益（加大并发只涨延迟），
+    # 放宽到 2 核后按「0.5 核 ÷ 单请求 DB CPU」模型吞吐约提升 4 倍。
+    mem_limit: 1g
     cpu_period: 100000
-    cpu_quota: 50000
+    cpu_quota: 200000
     pids_limit: 64
     cap_add:
       - CHOWN
