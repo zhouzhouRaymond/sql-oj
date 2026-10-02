@@ -1,39 +1,62 @@
 <template>
   <div class="teacher-layout">
-    <div class="sidebar">
+    <div class="sidebar" :class="{ collapsed: menuCollapsed }">
       <div class="logo">
-        <h2>SQL OJ</h2>
-        <p>教师端</p>
+        <div v-if="!menuCollapsed" class="logo-text">
+          <h2>SQL OJ</h2>
+          <p>教师端</p>
+        </div>
+        <!-- 折叠开关（窄屏已换成顶部横向菜单，无需折叠） -->
+        <el-tooltip
+          v-if="!isNarrow"
+          :content="menuCollapsed ? '展开菜单' : '收起菜单'"
+          placement="right"
+        >
+          <el-button class="collapse-btn" text @click="toggleCollapsed">
+            <el-icon :size="18">
+              <Expand v-if="menuCollapsed" />
+              <Fold v-else />
+            </el-icon>
+          </el-button>
+        </el-tooltip>
       </div>
-      <el-menu :default-active="activeMenu" router>
+      <el-menu :default-active="activeMenu" :collapse="menuCollapsed" router>
         <el-menu-item index="/teacher/questions">
           <el-icon><Document /></el-icon>
-          <span>题目管理</span>
+          <template #title>题目管理</template>
         </el-menu-item>
         <el-menu-item index="/teacher/exams">
           <el-icon><Notebook /></el-icon>
-          <span>考试管理</span>
+          <template #title>考试管理</template>
         </el-menu-item>
         <el-menu-item index="/teacher/stats">
           <el-icon><DataAnalysis /></el-icon>
-          <span>统计分析</span>
+          <template #title>统计分析</template>
         </el-menu-item>
         <el-menu-item index="/teacher/submissions">
           <el-icon><Tickets /></el-icon>
-          <span>提交记录</span>
+          <template #title>提交记录</template>
         </el-menu-item>
         <el-menu-item index="/teacher/profile">
           <el-icon><User /></el-icon>
-          <span>个人中心</span>
+          <template #title>个人中心</template>
         </el-menu-item>
         <el-menu-item index="/teacher/accounts">
           <el-icon><UserFilled /></el-icon>
-          <span>账号管理</span>
+          <template #title>账号管理</template>
         </el-menu-item>
       </el-menu>
       <div class="user-info">
-        <span>{{ userStore.displayName }}</span>
-        <el-button type="danger" text @click="handleLogout">退出</el-button>
+        <span v-if="!menuCollapsed" class="user-name" :title="userStore.displayName">
+          {{ userStore.displayName }}
+        </span>
+        <!-- 折叠时只留图标，悬停显示「退出登录」 -->
+        <el-tooltip content="退出登录" placement="right" :disabled="!menuCollapsed">
+          <el-button type="danger" text @click="handleLogout">
+            <el-icon v-if="menuCollapsed"><SwitchButton /></el-icon>
+            <span v-else>退出</span>
+          </el-button>
+        </el-tooltip>
       </div>
     </div>
     <div class="main-content">
@@ -43,10 +66,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'  // ✅ 导入 ElMessageBox
-import { Document, Notebook, DataAnalysis, Tickets, User, UserFilled } from '@element-plus/icons-vue'
+import {
+  Document, Notebook, DataAnalysis, Tickets, User, UserFilled,
+  Fold, Expand, SwitchButton,
+} from '@element-plus/icons-vue'
 import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
@@ -54,6 +80,48 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const activeMenu = computed(() => route.path)
+
+// ===== 侧边栏折叠 =====
+// 折叠偏好记在本机（刷新 / 换页面后保持）；窄屏时侧边栏已变成顶部横向菜单，
+// 不参与折叠，避免出现“图标模式 + 横向排布”的叠加状态。
+const COLLAPSE_KEY = 'teacher_sidebar_collapsed'
+const NARROW_QUERY = '(max-width: 900px)'   // 与下方媒体查询断点保持一致
+
+const isCollapsed = ref(false)
+const isNarrow = ref(false)
+
+try {
+  isCollapsed.value = localStorage.getItem(COLLAPSE_KEY) === '1'
+} catch {
+  // localStorage 不可用（隐私模式）时按展开处理
+}
+
+const menuCollapsed = computed(() => isCollapsed.value && !isNarrow.value)
+
+const toggleCollapsed = () => {
+  isCollapsed.value = !isCollapsed.value
+  try {
+    localStorage.setItem(COLLAPSE_KEY, isCollapsed.value ? '1' : '0')
+  } catch {
+    // 写入失败仅影响下次进入时的默认状态
+  }
+}
+
+// 跟随窗口宽度：窄屏自动展开（媒体查询把菜单改成横向）
+let narrowMedia: MediaQueryList | undefined
+const syncNarrow = (query: MediaQueryList | MediaQueryListEvent) => {
+  isNarrow.value = query.matches
+}
+
+onMounted(() => {
+  narrowMedia = window.matchMedia(NARROW_QUERY)
+  syncNarrow(narrowMedia)
+  narrowMedia.addEventListener('change', syncNarrow)
+})
+
+onUnmounted(() => {
+  narrowMedia?.removeEventListener('change', syncNarrow)
+})
 
 // ✅ 退出登录增加确认弹窗
 const handleLogout = () => {
@@ -82,11 +150,39 @@ const handleLogout = () => {
   color: #fff;
   display: flex;
   flex-direction: column;
+  /* 折叠 / 展开时宽度平滑过渡，避免侧边栏“跳一下” */
+  transition: width 0.2s ease;
+}
+/* 折叠态：只留图标（64px 与 el-menu 默认的折叠宽度一致） */
+.sidebar.collapsed {
+  width: 64px;
 }
 .logo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 20px;
-  text-align: center;
   border-bottom: 1px solid #4a5a6e;
+}
+.logo-text {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+/* 折叠后只剩开关按钮，居中显示 */
+.sidebar.collapsed .logo {
+  justify-content: center;
+  padding: 20px 0;
+}
+/* 折叠开关：深色侧边栏里的浅色图标按钮 */
+.logo .collapse-btn {
+  color: #bfcbd9;
+  padding: 6px;
+}
+.logo .collapse-btn:hover {
+  color: #fff;
+  background-color: #263445;
 }
 .logo h2 {
   margin: 0;
@@ -119,7 +215,19 @@ const handleLogout = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   color: #bfcbd9;
+}
+.user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 折叠态：隐藏用户名，退出按钮居中 */
+.sidebar.collapsed .user-info {
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 0;
 }
 .main-content {
   flex: 1;
