@@ -31,3 +31,30 @@ export const getUserStats = () => {
 export const getMySubmissions = (params?: { page?: number }) => {
   return request.get('/submissions/', { params })
 }
+
+// ===== 账号管理（教师专用）=====
+// 账号列表：支持分页 / 关键词搜索（登录名、用户名、邮箱）/ 角色过滤
+export const getUsers = (params?: {
+  page?: number
+  search?: string
+  user_type?: string
+}) => {
+  return request.get('/users/', { params })
+}
+
+// 新建账号（学生 / 教师均可）
+export const createUser = (data: {
+  username: string
+  display_name?: string
+  email: string
+  password: string
+  user_type: 'student' | 'teacher'
+  is_active?: boolean
+}) => {
+  return request.post('/users/', data)
+}
+
+// 修改账号：用户名/邮箱/角色/启用状态，传 password 即为重置密码
+export const updateUserById = (id: number, data: any) => {
+  return request.patch(`/users/${id}/`, data)
+}

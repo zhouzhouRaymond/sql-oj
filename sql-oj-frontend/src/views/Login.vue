@@ -66,11 +66,10 @@
             <div class="input-hint">密码至少 6 个字符</div>
           </el-form-item>
 
-          <el-form-item label="身份" required>
-            <el-radio-group v-model="form.user_type">
-              <el-radio value="student">👨‍🎓 学生</el-radio>
-              <el-radio value="teacher">👩‍🏫 教师</el-radio>
-            </el-radio-group>
+          <!-- 注册仅支持学生账号；教师账号由教师在「账号管理」中创建 -->
+          <el-form-item v-if="!isLogin" label="身份">
+            <el-tag type="success">👨‍🎓 学生</el-tag>
+            <div class="input-hint">注册仅支持学生账号，教师账号请由已登录教师在「账号管理」中创建</div>
           </el-form-item>
 
           <el-form-item>

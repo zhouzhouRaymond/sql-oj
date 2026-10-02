@@ -89,6 +89,11 @@ const router = createRouter({
           component: () => import('../views/teacher/Statistics.vue')
         },
         {
+          path: 'accounts',
+          name: 'AccountManage',
+          component: () => import('../views/teacher/AccountManage.vue')
+        },
+        {
           path: '',
           redirect: '/teacher/questions'
         }

@@ -22,6 +22,10 @@
           <el-icon><User /></el-icon>
           <span>个人中心</span>
         </el-menu-item>
+        <el-menu-item index="/teacher/accounts">
+          <el-icon><UserFilled /></el-icon>
+          <span>账号管理</span>
+        </el-menu-item>
       </el-menu>
       <div class="user-info">
         <span>{{ userStore.displayName }}</span>
@@ -38,7 +42,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'  // ✅ 导入 ElMessageBox
-import { Document, Notebook, DataAnalysis, User } from '@element-plus/icons-vue'
+import { Document, Notebook, DataAnalysis, User, UserFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
