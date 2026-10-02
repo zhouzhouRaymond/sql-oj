@@ -4,7 +4,6 @@
       <h1>📝 题目管理</h1>
       <div class="actions">
         <el-button type="primary" @click="goToCreate">+ 创建题目</el-button>
-        <el-button type="danger" @click="handleLogout">退出</el-button>
       </div>
     </div>
 
@@ -75,11 +74,9 @@
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useUserStore } from '../../stores/user'
 import { getQuestions, deleteQuestion, patchQuestion } from '../../api/questions'
 
 const router = useRouter()
-const userStore = useUserStore()
 
 const questions = ref<any[]>([])
 const loading = ref(false)      // 首屏 / 重置加载
@@ -247,21 +244,6 @@ const handleDelete = (id: number) => {
     } catch (error) {
       ElMessage.error('删除失败，请重试')
     }
-  }).catch(() => {
-    // 用户取消，不做任何事
-  })
-}
-
-// ✅ 退出登录增加确认弹窗
-const handleLogout = () => {
-  ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    userStore.logout()
-    router.push('/login')
-    ElMessage.success('已退出登录')
   }).catch(() => {
     // 用户取消，不做任何事
   })
