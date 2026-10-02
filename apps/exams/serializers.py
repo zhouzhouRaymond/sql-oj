@@ -18,11 +18,20 @@ class ExamSerializer(serializers.ModelSerializer):
         source='students', many=True, queryset=User.objects.filter(user_type='student'),
         required=False, write_only=True
     )
+    # 创建人（展示用）：考试由全体教师共享，列表需要显示是谁创建的
+    teacher_name = serializers.SerializerMethodField()
+    teacher_username = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
         fields = '__all__'
         read_only_fields = ('teacher', 'created_at', 'students')
+
+    def get_teacher_name(self, obj):
+        return obj.teacher.name if obj.teacher else ''
+
+    def get_teacher_username(self, obj):
+        return obj.teacher.username if obj.teacher else ''
 
     def validate_student_scope(self, value):
         """兑容前端可能发送的不同值，统一转为后端期望的值"""
