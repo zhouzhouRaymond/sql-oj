@@ -91,7 +91,8 @@ class SubmissionViewSet(viewsets.ModelViewSet):
                 Q(student__user_type='student') | Q(student=self.request.user)
             )
 
-        # 可选过滤：按题目 / 学生 / 时间段收窄（教师端「学生提交记录」下钻用）
+        # 可选过滤：按题目 / 学生 / 考试 / 时间段收窄
+        # （教师端「学生提交记录」下钻、教师端「考试提交情况」/ 学生端考试结果页都用它）
         # 学生视角在上面已限定为「本人提交」，这里的 student_id 只会进一步收窄，
         # 因此不会借此看到他人提交。
         question_id = self.request.query_params.get('question_id')
@@ -100,6 +101,9 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         student_id = self.request.query_params.get('student_id')
         if student_id:
             qs = qs.filter(student_id=_to_int(student_id, 'student_id'))
+        exam_id = self.request.query_params.get('exam')
+        if exam_id:
+            qs = qs.filter(exam_id=_to_int(exam_id, 'exam'))
         start, end = _parse_time_range(
             self.request.query_params.get('start'),
             self.request.query_params.get('end'),
