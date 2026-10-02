@@ -250,7 +250,7 @@ onUnmounted(() => {
 }
 .header h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   color: #2d3748;
 }
 .user-info {

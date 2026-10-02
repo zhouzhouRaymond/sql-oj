@@ -291,7 +291,7 @@ const toggleMode = () => {
 }
 
 .banner-content h1 {
-  font-size: 42px;
+  font-size: 34px;
   margin-bottom: 8px;
   font-weight: 700;
   letter-spacing: 1px;
@@ -332,7 +332,7 @@ const toggleMode = () => {
 }
 
 .form-header h2 {
-  font-size: 28px;
+  font-size: 24px;
   color: #2d3748;
   margin: 0 0 4px 0;
 }
@@ -432,7 +432,7 @@ const toggleMode = () => {
     padding: 30px 20px;
   }
   .login-banner h1 {
-    font-size: 30px;
+    font-size: 26px;
   }
   .login-form {
     padding: 30px 24px;

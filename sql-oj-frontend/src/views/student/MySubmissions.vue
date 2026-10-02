@@ -191,6 +191,10 @@ onUnmounted(() => {
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
+.header h1 {
+  margin: 0;
+  font-size: 20px;
+}
 .pagination {
   margin-top: 20px;
   display: flex;

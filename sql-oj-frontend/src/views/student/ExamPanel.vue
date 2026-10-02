@@ -186,6 +186,10 @@ onUnmounted(() => {
   margin-bottom: 20px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
+.exam-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
 .timer {
   font-size: 24px;
   font-weight: bold;

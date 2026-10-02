@@ -190,6 +190,10 @@ onMounted(() => {
   margin-bottom: 20px;
   padding: 0 20px;
 }
+.header h1 {
+  margin: 0;
+  font-size: 20px;
+}
 .user-info {
   display: flex;
   align-items: center;
