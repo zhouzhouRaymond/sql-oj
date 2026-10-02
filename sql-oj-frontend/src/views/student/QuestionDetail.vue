@@ -1,19 +1,11 @@
 <template>
   <div class="question-detail-container">
-    <!-- 顶部导航 -->
-    <div class="header">
-      <el-button @click="goBack">← 返回题目列表</el-button>
-      <h1>📝 题目详情</h1>
-      <el-button
-        class="my-submissions-btn"
-        type="primary"
-        plain
-        size="small"
-        @click="goToMySubmissions"
-      >
-        📝 我的提交
-      </el-button>
-    </div>
+    <PageHeader title="📝 题目详情" :welcome="userStore.displayName">
+      <template #actions>
+        <!-- 学生端统一的四个功能入口 + 退出（见 StudentNav 组件） -->
+        <StudentNav />
+      </template>
+    </PageHeader>
 
     <!-- 主要内容 -->
     <div v-loading="loading" class="content">
@@ -261,19 +253,20 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
 import { getSubmission, submitSQL } from '../../api/submissions'
 import SqlEditor from '../../components/SqlEditor.vue'
 import { parseResultSet } from '../../utils/resultSet'
+import PageHeader from '../../components/PageHeader.vue'
+import StudentNav from '../../components/StudentNav.vue'
 import { statusTagType, statusText } from '../../utils/status'
 import { useUserStore } from '../../stores/user'
 import { buildDraftKey, loadDraft, saveDraft } from '../../utils/draft'
 
 const route = useRoute()
-const router = useRouter()
 const userStore = useUserStore()
 const questionId = computed(() => Number(route.params.id))
 
@@ -421,15 +414,6 @@ const resetCode = () => {
   sqlCode.value = ''
   result.value = null
   activeCaseIndex.value = 1
-}
-
-const goBack = () => {
-  router.push('/questions')
-}
-
-// 跳转到「我的提交」页面（带上来源路径，便于在该页「返回」时回到本题详情）
-const goToMySubmissions = () => {
-  router.push({ path: '/submissions', query: { from: route.fullPath } })
 }
 
 const difficultyTagType = (difficulty: string) => {
@@ -598,26 +582,6 @@ onUnmounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-bottom: 20px;
-  background: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
-}
-/* 顶栏右侧操作按钮 */
-.my-submissions-btn {
-  margin-left: auto;
 }
 
 .content {
@@ -940,11 +904,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .question-detail-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 12px 16px;
   }
   .card-header {
     flex-wrap: wrap;

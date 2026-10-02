@@ -1,16 +1,15 @@
 <template>
   <div class="exam-list-container">
-    <div class="header">
-      <div class="header-title">
-        <h1>📋 我的考试</h1>
-        <p class="subtitle">进入考试后按考试时长倒计时，倒计时结束会自动交卷；作答内容会自动暂存</p>
-      </div>
-      <div class="user-info">
-        <span>欢迎，{{ userStore.displayName }}</span>
-        <el-button type="primary" link @click="goToQuestions">← 返回题库</el-button>
-        <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
-      </div>
-    </div>
+    <PageHeader
+      title="📋 我的考试"
+      subtitle="进入考试后按考试时长倒计时，倒计时结束会自动交卷；作答内容会自动暂存"
+      :welcome="userStore.displayName"
+    >
+      <template #actions>
+        <!-- 学生端统一的四个功能入口 + 退出（见 StudentNav 组件） -->
+        <StudentNav />
+      </template>
+    </PageHeader>
 
     <el-tabs v-model="activeTab" class="exam-tabs">
       <el-tab-pane :label="currentTabLabel" name="current" />
@@ -130,10 +129,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { useUserStore } from '../../stores/user'
 import { getAllExams, getMyExamScores } from '../../api/exams'
 import { formatDateTime } from '../../utils/time'
+import PageHeader from '../../components/PageHeader.vue'
+import StudentNav from '../../components/StudentNav.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -247,22 +248,6 @@ const goToResult = (examId: number) => {
   }
 }
 
-const goToQuestions = () => {
-  router.push('/questions')
-}
-
-const handleLogout = () => {
-  ElMessageBox.confirm('确定退出登录吗？', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    userStore.logout()
-    router.push('/login')
-    ElMessage.success('已退出')
-  })
-}
-
 onMounted(() => {
   loadExams()
 })
@@ -273,31 +258,6 @@ onMounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  background: #fff;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
-}
-.subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #909399;
-}
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 15px;
 }
 .exam-tabs {
   margin-bottom: 8px;
@@ -384,15 +344,6 @@ onMounted(() => {
 @media (max-width: 768px) {
   .exam-list-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 12px 16px;
-  }
-  .user-info {
-    flex-wrap: wrap;
-    gap: 8px;
   }
 }
 </style>

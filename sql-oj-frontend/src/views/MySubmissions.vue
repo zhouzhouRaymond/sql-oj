@@ -1,15 +1,26 @@
 <template>
   <div class="submissions-container">
-    <div class="header">
-      <el-button v-if="!inTeacherLayout" @click="goBack">← 返回</el-button>
-      <div class="header-title">
-        <!-- 教师进入本页看到的是全班提交，标题随之区分 -->
-        <h1>{{ userStore.isTeacher ? '📝 学生提交记录' : '📝 我的提交记录' }}</h1>
-        <p class="subtitle">
-          共 {{ total }} 条，按提交时间由近到远排列；点「查看详情」可看提交的 SQL 与判题用例
-        </p>
-      </div>
-    </div>
+    <PageHeader
+      :title="userStore.isTeacher ? '📝 学生提交记录' : '📝 我的提交记录'"
+      :subtitle="`共 ${total} 条，按提交时间由近到远排列；点「查看详情」可看提交的 SQL 与判题用例`"
+      :welcome="inTeacherLayout ? undefined : userStore.displayName"
+    >
+      <!-- 仅当学生从「题目详情」进来时，才在导航栏最左侧显示「← 返回」原路回到该题 -->
+      <template #leading>
+        <el-button
+          v-if="!inTeacherLayout && backTarget"
+          type="primary"
+          link
+          @click="goBack"
+        >
+          ← 返回
+        </el-button>
+      </template>
+      <!-- 教师端嵌在布局里时，导航与退出由侧边栏负责，这里不再重复放按钮 -->
+      <template #actions>
+        <StudentNav v-if="!inTeacherLayout" />
+      </template>
+    </PageHeader>
 
     <el-card class="table-card" shadow="never">
       <el-table
@@ -28,9 +39,7 @@
         <el-table-column label="题目" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="q-title">{{ questionTitle(row) }}</div>
-            <div class="q-sub">
-              题目 #{{ row.question }}<span v-if="row.exam"> · 考试 #{{ row.exam }}</span>
-            </div>
+            <div class="q-sub">题目 #{{ row.question }}</div>
           </template>
         </el-table-column>
         <!-- 教师查看全部提交时显示提交人（学生只能看到自己的提交） -->
@@ -55,9 +64,14 @@
             <span class="score" :class="{ 'score-zero': !row.score }">{{ row.score ?? 0 }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="来源" min-width="110" align="center">
+        <!-- 来源：优先显示考试名称（人类可读），下方小字保留考试 id 便于对账 -->
+        <el-table-column label="来源" min-width="180">
           <template #default="{ row }">
-            <span class="origin">{{ row.exam ? `考试 #${row.exam}` : '练习' }}</span>
+            <template v-if="row.exam">
+              <div class="q-title">{{ row.exam_title || `考试 #${row.exam}` }}</div>
+              <div class="q-sub">考试 #{{ row.exam }}</div>
+            </template>
+            <span v-else class="muted">练习</span>
           </template>
         </el-table-column>
         <el-table-column label="提交时间" min-width="150" align="center">
@@ -93,7 +107,11 @@
           {{ currentDetail.question_title || `题目 #${currentDetail.question}` }}
         </el-descriptions-item>
         <el-descriptions-item label="来源">
-          {{ currentDetail.exam ? `考试 #${currentDetail.exam}` : '练习' }}
+          <template v-if="currentDetail.exam">
+            {{ currentDetail.exam_title || `考试 #${currentDetail.exam}` }}
+            <span class="q-sub">考试 #{{ currentDetail.exam }}</span>
+          </template>
+          <template v-else>练习</template>
         </el-descriptions-item>
         <el-descriptions-item v-if="userStore.isTeacher" label="提交人">
           {{ currentDetail.student_name || currentDetail.student_username || '-' }}
@@ -133,6 +151,8 @@ import { useUserStore } from '../stores/user'
 import { getSubmission, getSubmissions } from '../api/submissions'
 import { formatDateTime, formatRelativeTime } from '../utils/time'
 import { statusTagType, statusText } from '../utils/status'
+import PageHeader from '../components/PageHeader.vue'
+import StudentNav from '../components/StudentNav.vue'
 import SubmissionCaseDetail from '../components/SubmissionCaseDetail.vue'
 
 const router = useRouter()
@@ -187,14 +207,18 @@ const loadSubmissions = async () => {
   }
 }
 
-// 返回上一级：优先回到来源页面（入口通过 ?from= 传入），否则按身份回到各自首页
-const goBack = () => {
+// 「← 返回」的目标：入口通过 ?from= 传来的来源路径。
+// 只有「从题目详情页 /questions/<id> 进来」时才需要它 —— 从题库 / 考试 / 个人中心
+// 等入口进来时，用顶部统一导航即可，多一个返回按钮反而多余，因此这些入口不显示。
+const backTarget = computed(() => {
   const from = route.query.from
-  if (typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')) {
-    router.push(from)
-    return
-  }
-  router.push(userStore.user?.user_type === 'teacher' ? '/teacher' : '/questions')
+  if (typeof from !== 'string' || !from.startsWith('/')) return ''
+  const [path] = from.split('?')
+  return /^\/questions\/[^/]+$/.test(path) ? from : ''
+})
+
+const goBack = () => {
+  if (backTarget.value) router.push(backTarget.value)
 }
 
 // ✅ 查看详情：先展示列表中的基础信息，再按 id 懒加载完整详情（含 submitted_sql）
@@ -234,26 +258,6 @@ onUnmounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
-}
-.header {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-bottom: 20px;
-  background: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
-}
-.header-title .subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #909399;
 }
 
 /* 表格卡片：与考试列表保持一致的观感 */
@@ -305,10 +309,6 @@ onUnmounted(() => {
 .score-zero {
   color: #f56c6c;
 }
-.origin {
-  font-size: 13px;
-  color: #606266;
-}
 
 .pagination {
   margin-top: 20px;
@@ -346,14 +346,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .submissions-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 12px 16px;
-  }
-  .header h1 {
-    font-size: 18px;
   }
 }
 </style>

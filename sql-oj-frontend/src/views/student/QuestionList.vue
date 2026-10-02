@@ -1,15 +1,11 @@
 <template>
   <div class="question-list-container">
-    <div class="header">
-      <h1>📚 SQL 题库</h1>
-      <div class="user-info">
-        <span>欢迎，{{ userStore.displayName }}</span>
-        <el-button type="primary" link @click="goToProfile">👤 个人中心</el-button>
-        <el-button type="primary" link @click="goToExams">📋 考试</el-button>
-        <el-button type="primary" link @click="goToSubmissions">📝 我的提交</el-button>
-        <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
-      </div>
-    </div>
+    <PageHeader title="📚 SQL 题库" :welcome="userStore.displayName">
+      <template #actions>
+        <!-- 学生端统一的四个功能入口 + 退出（见 StudentNav 组件） -->
+        <StudentNav />
+      </template>
+    </PageHeader>
 
     <el-table :data="questions" v-loading="loading" stripe>
       <el-table-column prop="id" label="题号" width="80" />
@@ -58,13 +54,14 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useUserStore } from '../../stores/user'
 import { getQuestions } from '../../api/questions'
+import PageHeader from '../../components/PageHeader.vue'
+import StudentNav from '../../components/StudentNav.vue'
 
 const router = useRouter()
-const route = useRoute()
 const userStore = useUserStore()
 
 const questions = ref<any[]>([])
@@ -187,33 +184,8 @@ const onScroll = () => {
   })
 }
 
-const goToProfile = () => {
-  router.push('/profile')
-}
-
-const goToExams = () => {
-  router.push('/exams')
-}
-
 const goToDetail = (id: number) => {
   router.push(`/questions/${id}`)
-}
-
-// 跳转「我的提交」，带上来源路径，便于在该页「返回」时回到这里
-const goToSubmissions = () => {
-  router.push({ path: '/submissions', query: { from: route.fullPath } })
-}
-
-const handleLogout = () => {
-  ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    userStore.logout()
-    router.push('/login')
-    ElMessage.success('已退出登录')
-  }).catch(() => {})
 }
 
 onMounted(() => {
@@ -238,26 +210,6 @@ onUnmounted(() => {
   /* 追加数据时禁用浏览器「滚动锚定」，避免视图被拉到最底端 */
   overflow-anchor: none;
 }
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  background: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
-}
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 /* 触底加载提示 */
 .load-more {
   display: flex;
@@ -281,18 +233,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .question-list-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 12px 16px;
-  }
-  .header h1 {
-    font-size: 18px;
-  }
-  .user-info {
-    flex-wrap: wrap;
-    gap: 8px;
   }
 }
 </style>

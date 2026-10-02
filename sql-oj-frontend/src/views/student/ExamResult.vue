@@ -1,16 +1,16 @@
 <template>
   <div class="exam-result-container">
-    <div class="header">
-      <div class="header-title">
-        <h1>📊 考试结果</h1>
-        <!-- 交卷结束进入：唯一出口是退出登录；从「考试记录」进入：可返回考试记录 -->
-        <p class="subtitle">{{ headerHint }}</p>
-      </div>
-      <el-button v-if="enteredFromRecords" type="primary" plain @click="goBackToRecords">
-        ← 返回考试记录
-      </el-button>
-      <el-button v-else type="danger" @click="handleLogout">退出登录</el-button>
-    </div>
+    <PageHeader title="📊 考试结果" :subtitle="headerHint" :welcome="userStore.displayName">
+      <template #actions>
+        <!-- 记录模式：与学生端其它页面同一组按钮（可安全离开）
+             交卷模式：离开本页会自动登出（见 onBeforeRouteLeave），只保留「退出」一个出口，
+             否则导航按钮会变成陷阱。 -->
+        <StudentNav v-if="enteredFromRecords">
+          <el-button type="primary" link @click="goBackToRecords">← 返回考试记录</el-button>
+        </StudentNav>
+        <el-button v-else type="danger" size="small" @click="handleLogout">退出</el-button>
+      </template>
+    </PageHeader>
 
     <div v-loading="loading" class="content">
       <!-- 总分 -->
@@ -88,10 +88,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { getExamResult } from '../../api/exams'
 import { getSubmission, getSubmissions } from '../../api/submissions'
 import { statusTagType } from '../../utils/status'
+import PageHeader from '../../components/PageHeader.vue'
+import StudentNav from '../../components/StudentNav.vue'
+import { confirmLogout } from '../../utils/session'
 import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 import { useUserStore } from '../../stores/user'
 
@@ -222,18 +225,11 @@ const headerHint = computed(() =>
     : '离开本页会退出登录，返回登录界面',
 )
 
-// 考试结束模式：退出登录 → 登录界面
-const handleLogout = () => {
-  ElMessageBox.confirm('退出登录后将返回登录界面，确定继续吗？', '退出登录', {
-    confirmButtonText: '确定退出',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    userStore.logout()
-    router.push('/login')
-    ElMessage.success('已退出登录')
-  }).catch(() => {})
-}
+// 考试结束模式：退出登录 → 登录界面（与其它页面共用同一实现，仅定制文案）
+const handleLogout = () => confirmLogout({
+  message: '退出登录后将返回登录界面，确定继续吗？',
+  confirmText: '确定退出'
+})
 
 // 考试记录模式：返回「考试记录」标签页（不登出）
 const goBackToRecords = () => {
@@ -275,27 +271,6 @@ onMounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  background: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
-}
-/* 页面副标题：说明本页只提供「退出登录」一个出口 */
-.header-title .subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #909399;
 }
 .content {
   max-width: 800px;
@@ -357,14 +332,6 @@ onMounted(() => {
 @media (max-width: 768px) {
   .exam-result-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 12px 16px;
-  }
-  .header h1 {
-    font-size: 18px;
   }
   .total-score .value {
     font-size: 34px;

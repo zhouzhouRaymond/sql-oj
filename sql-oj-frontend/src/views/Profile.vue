@@ -1,9 +1,15 @@
 <template>
   <div class="profile-container">
-    <div class="header">
-      <h1>👤 个人中心</h1>
-      <el-button v-if="!inTeacherLayout" @click="goBack">← 返回</el-button>
-    </div>
+    <PageHeader
+      title="👤 个人中心"
+      :welcome="inTeacherLayout ? undefined : userStore.displayName"
+    >
+      <!-- 教师端嵌在布局里时，导航与退出由侧边栏负责，这里不再重复放按钮 -->
+      <template #actions>
+        <!-- 教师端嵌在布局里时，按钮由侧边栏负责，这里不再重复 -->
+        <StudentNav v-if="!inTeacherLayout" />
+      </template>
+    </PageHeader>
 
     <div class="profile-content">
       <!-- 左侧：用户信息卡片 -->
@@ -199,6 +205,8 @@ import { useUserStore } from '../stores/user'
 import { updateUser, getUserStats, changePassword } from '../api/users'
 import { getSubmission, getSubmissions } from '../api/submissions'
 import { statusTagType } from '../utils/status'
+import PageHeader from '../components/PageHeader.vue'
+import StudentNav from '../components/StudentNav.vue'
 import { formatDateTime, formatRelativeTime } from '../utils/time'
 
 const router = useRouter()
@@ -378,14 +386,6 @@ const submitPassword = async () => {
   }
 }
 
-const goBack = () => {
-  if (isTeacher.value) {
-    router.push('/teacher')
-  } else {
-    router.push('/questions')
-  }
-}
-
 // 判题状态标签颜色统一由 utils/status 提供（见文件顶部 import）
 
 onMounted(() => {
@@ -410,21 +410,6 @@ onUnmounted(() => {
   padding: 20px;
   min-height: 100vh;
   background-color: #f5f7fa;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  background: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.header h1 {
-  margin: 0;
-  font-size: 20px;
-  color: #2d3748;
 }
 
 .profile-content {
@@ -528,11 +513,6 @@ onUnmounted(() => {
 @media (max-width: 900px) {
   .profile-container {
     padding: 12px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 12px 16px;
   }
   .profile-content {
     flex-direction: column;
