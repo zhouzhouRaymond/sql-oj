@@ -724,12 +724,17 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
+            '--replace', action='store_true',
+            help='覆盖模式：先删除同名题目再重新导入（默认跳过已存在的同名题目）'
+        )
+        parser.add_argument(
             '--teacher-id', type=int, default=1,
             help='教师用户 ID（默认为 1）'
         )
 
     def handle(self, *args, **options):
         teacher_id = options['teacher_id']
+        replace = options['replace']
         try:
             teacher = User.objects.get(id=teacher_id, user_type='teacher')
         except User.DoesNotExist:
@@ -745,9 +750,22 @@ class Command(BaseCommand):
         # Question.objects.all().delete()
 
         created = 0
-        for q_data in QUESTIONS:
+        skipped = 0
+        for item in QUESTIONS:
+            q_data = dict(item)
             answers = q_data.pop('answers', [])
             test_cases = q_data.pop('test_cases', [])
+
+            # 幂等：同名题目已存在时默认跳过，避免重复导入
+            existing = Question.objects.filter(title=q_data.get('title'))
+            if existing.exists():
+                if not replace:
+                    skipped += 1
+                    self.stdout.write(self.style.WARNING(
+                        f'  ⏭  已存在，跳过：{q_data.get("title")}'
+                    ))
+                    continue
+                existing.delete()
 
             question = Question.objects.create(teacher=teacher, **q_data)
             for ans in answers:
@@ -761,5 +779,5 @@ class Command(BaseCommand):
             ))
 
         self.stdout.write(self.style.SUCCESS(
-            f'\n🎉 成功导入 {created} 道题目！'
+            f'\n🎉 成功导入 {created} 道题目' + (f'，跳过 {skipped} 道已存在的题目' if skipped else '') + '！'
         ))

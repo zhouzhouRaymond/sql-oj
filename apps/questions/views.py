@@ -1,4 +1,4 @@
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 
 from .models import Question, Answer, TestCase
@@ -12,6 +12,9 @@ from apps.users.permissions import IsTeacher
 class QuestionViewSet(viewsets.ModelViewSet):
     """题目管理 ViewSet"""
     queryset = Question.objects.all().prefetch_related('answers', 'test_cases')
+    # 支持 ?ordering=id / -created_at 等排序（学生题库按题号升序拉取）
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['id', 'created_at', 'title', 'difficulty']
 
     def get_serializer_class(self):
         """学生看不到答案，教师看到完整信息"""

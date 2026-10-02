@@ -1,11 +1,15 @@
+import re
+from datetime import datetime, time
+
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from django.db.models import Count, Q, Avg, Max, Sum
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 
 from .models import Submission
-from .serializers import SubmissionSerializer
+from .serializers import SubmissionSerializer, SubmissionListSerializer
 from .judging import JudgeQueueFull, PENDING, enqueue_judge
 from apps.questions.models import Question
 from apps.exams.models import Exam
@@ -13,10 +17,54 @@ from apps.users.models import User
 from apps.users.permissions import IsTeacher
 
 
+# 只给日期（2026-10-02）或只精确到分钟（2026-10-02 10:30）
+_DATE_ONLY_RE = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}$')
+_MINUTE_ONLY_RE = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}[T ]\d{1,2}:\d{1,2}$')
+
+
+def _parse_time_range(start_raw, end_raw):
+    """把 ?start=&end= 解析为带时区的 datetime。
+
+    - 支持 YYYY-MM-DD（end 自动补到当天 23:59:59.999999）、
+      YYYY-MM-DD HH:mm（end 补到该分钟的 59.999999 秒）或完整 ISO 时间
+    - 为空则返回 None，表示该侧不做时间限制
+    """
+    def to_datetime(raw, is_end=False):
+        raw = (raw or '').strip()
+        if not raw:
+            return None
+        if _DATE_ONLY_RE.match(raw):
+            # 只给日期：start 取当天 00:00:00，end 取当天 23:59:59.999999
+            day = parse_date(raw)
+            if day is None:
+                return None
+            value = datetime.combine(day, time.max if is_end else time.min)
+        else:
+            value = parse_datetime(raw)
+            if value is None:
+                return None
+            if is_end and _MINUTE_ONLY_RE.match(raw):
+                # 结束时间只精确到分钟时，按「该分钟的最后一刻」处理，
+                # 否则同一分钟内 10:30:30 这样的提交会被漏掉
+                value = value.replace(second=59, microsecond=999999)
+        if timezone.is_naive(value):
+            value = timezone.make_aware(value)
+        return value
+
+    return to_datetime(start_raw), to_datetime(end_raw, is_end=True)
+
+
 class SubmissionViewSet(viewsets.ModelViewSet):
     """提交与判题 ViewSet"""
-    queryset = Submission.objects.all()
+    # 默认按提交时间倒序，保证列表分页后仍是「由近到远」的顺序
+    queryset = Submission.objects.all().order_by('-submission_time')
     serializer_class = SubmissionSerializer
+
+    def get_serializer_class(self):
+        """列表不返回体积较大的 submitted_sql，详情才返回（供前端懒加载）"""
+        if self.action == 'list':
+            return SubmissionListSerializer
+        return SubmissionSerializer
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -166,6 +214,7 @@ class StatsViewSet(viewsets.ViewSet):
             stats.append({
                 'student_id': s.id,
                 'username': s.username,
+                'name': s.name,
                 'total_submissions': total,
                 'passed': passed,
                 'passed_questions': passed_questions,
@@ -173,3 +222,92 @@ class StatsViewSet(viewsets.ViewSet):
             })
         stats.sort(key=lambda x: x['rate'], reverse=True)
         return Response(stats)
+
+    @action(detail=False, methods=['get'])
+    def question(self, request):
+        """单题提交统计（教师可见），支持按时间段筛选
+
+        查询参数：
+        - question_id：必填
+        - start / end：YYYY-MM-DD（含当天）、YYYY-MM-DD HH:mm（精确到分钟）
+          或完整 ISO 时间；可省略表示不限
+
+        仅统计学生提交（不含教师本人的试用提交）。
+        """
+        if request.user.user_type != 'teacher':
+            return Response({'error': '无权限'}, status=status.HTTP_403_FORBIDDEN)
+
+        question_id = request.query_params.get('question_id')
+        if not question_id:
+            return Response({'error': 'question_id 为必填'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            question = Question.objects.get(id=question_id)
+        except (Question.DoesNotExist, ValueError):
+            return Response({'error': '题目不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        start, end = _parse_time_range(
+            request.query_params.get('start'),
+            request.query_params.get('end'),
+        )
+
+        submissions = Submission.objects.filter(
+            question=question, student__user_type='student'
+        )
+        if start:
+            submissions = submissions.filter(submission_time__gte=start)
+        if end:
+            submissions = submissions.filter(submission_time__lte=end)
+
+        total_submissions = submissions.count()
+        # 去重提交数：同一学生在时间段内多次提交只算一次
+        distinct_submissions = submissions.values('student').distinct().count()
+        accepted_submissions = submissions.filter(execution_status='ACCEPTED').count()
+        # 通过人数：至少有一次 ACCEPTED 的学生数（去重）
+        passed_students = submissions.filter(
+            execution_status='ACCEPTED'
+        ).values('student').distinct().count()
+
+        # 学生通过率排名：按学生聚合该时间段内本题的提交情况
+        ranking = []
+        rows = (
+            submissions.values('student__id', 'student__username', 'student__display_name')
+            .annotate(
+                total=Count('id'),
+                accepted=Count('id', filter=Q(execution_status='ACCEPTED')),
+            )
+        )
+        for row in rows:
+            total = row['total']
+            accepted = row['accepted']
+            ranking.append({
+                'student_id': row['student__id'],
+                'username': row['student__username'],
+                'name': row['student__display_name'] or row['student__username'],
+                'total_submissions': total,
+                'accepted_submissions': accepted,
+                'pass_rate': round(accepted / total, 4) if total else 0,
+                'passed': accepted > 0,
+            })
+        # 通过率降序 → 通过提交数多者优先 → 提交次数少者优先 → 用户名
+        ranking.sort(key=lambda r: (
+            -r['pass_rate'],
+            -r['accepted_submissions'],
+            r['total_submissions'],
+            r['name'] or '',
+        ))
+
+        return Response({
+            'question_id': question.id,
+            'title': question.title,
+            'start': start.isoformat() if start else None,
+            'end': end.isoformat() if end else None,
+            'total_submissions': total_submissions,
+            'distinct_submissions': distinct_submissions,
+            'accepted_submissions': accepted_submissions,
+            'passed_students': passed_students,
+            # 通过率统一以小数返回（0~1），前端再转百分比
+            'pass_rate': round(accepted_submissions / total_submissions, 4) if total_submissions else 0,
+            'student_pass_rate': round(passed_students / distinct_submissions, 4) if distinct_submissions else 0,
+            'student_ranking': ranking,
+        })

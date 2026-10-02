@@ -41,5 +41,9 @@ class ExamSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        data['students'] = list(instance.students.values('id', 'username'))
+        # 返回登录名与自定义用户名（展示名），前端优先显示用户名
+        data['students'] = [
+            {'id': s.id, 'username': s.username, 'name': s.name}
+            for s in instance.students.all()
+        ]
         return data

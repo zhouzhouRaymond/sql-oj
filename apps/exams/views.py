@@ -17,9 +17,10 @@ class ExamViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        # 固定排序：避免分页顺序不稳定导致考试列表重复/遗漏
         base_qs = Exam.objects.all().prefetch_related(
             'exam_questions__question', 'students'
-        )
+        ).order_by('id')
         if user.user_type == 'teacher':
             # 教师只看自己创建的考试
             return base_qs.filter(teacher=user)
@@ -220,15 +221,18 @@ class ExamViewSet(viewsets.ModelViewSet):
         from apps.submissions.models import Submission
         from django.db.models import Max, Sum
 
-        # 按学生聚合最高总分排名
-        ranking = (
+        # 按学生聚合最高总分排名（附带展示用用户名）
+        ranking = list(
             Submission.objects
             .filter(exam=exam)
-            .values('student__id', 'student__username')
+            .values('student__id', 'student__username', 'student__display_name')
             .annotate(total=Sum('score'))
             .order_by('-total')
         )
+        for row in ranking:
+            # 展示用用户名：优先自定义用户名，其次登录名
+            row['student_name'] = row['student__display_name'] or row['student__username']
         return Response({
             'exam_title': exam.title,
-            'ranking': list(ranking),
+            'ranking': ranking,
         })
