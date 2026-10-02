@@ -40,7 +40,9 @@
             {{ row.name || row.display_name || row.username }}
           </template>
         </el-table-column>
-        <el-table-column prop="email" label="邮箱" min-width="180" />
+        <el-table-column label="邮箱" min-width="180">
+          <template #default="{ row }">{{ row.email || '-' }}</template>
+        </el-table-column>
         <el-table-column label="角色" width="90">
           <template #default="{ row }">
             <el-tag :type="row.user_type === 'teacher' ? 'warning' : 'success'" size="small">
@@ -105,8 +107,8 @@
             placeholder="展示名，留空则与登录名相同"
           />
         </el-form-item>
-        <el-form-item label="邮箱" required>
-          <el-input v-model="form.email" placeholder="请输入邮箱" />
+        <el-form-item label="邮箱">
+          <el-input v-model="form.email" placeholder="选填，可不填" clearable />
         </el-form-item>
         <el-form-item label="角色" required>
           <el-radio-group v-model="form.user_type">
@@ -221,8 +223,9 @@ const submitForm = async () => {
     ElMessage.warning('登录名至少 3 个字符')
     return
   }
-  if (!email) {
-    ElMessage.warning('请输入邮箱')
+  // 邮箱选填：填了才校验格式
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    ElMessage.warning('邮箱格式不正确（也可以留空不填）')
     return
   }
   if (!editingId.value && (!password || password.length < 6)) {
@@ -237,12 +240,18 @@ const submitForm = async () => {
   saving.value = true
   try {
     if (editingId.value) {
-      const payload: any = { display_name, email, user_type }
+      const payload: any = { display_name, email: email.trim(), user_type }
       if (password) payload.password = password
       await updateUserById(editingId.value, payload)
       ElMessage.success('账号已更新 ✅')
     } else {
-      await createUser({ username, display_name, email, user_type, password })
+      await createUser({
+        username,
+        display_name,
+        email: email.trim(),
+        user_type,
+        password
+      })
       ElMessage.success('账号创建成功 ✅')
     }
     dialogVisible.value = false

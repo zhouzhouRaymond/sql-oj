@@ -37,7 +37,8 @@
             <div style="margin-top: 4px; color: #909399; font-size: 12px;">展示用用户名，可自定义</div>
           </el-form-item>
           <el-form-item label="邮箱">
-            <el-input v-model="profileForm.email" placeholder="请输入邮箱" />
+            <el-input v-model="profileForm.email" placeholder="选填，可不填" clearable />
+            <div style="margin-top: 4px; color: #909399; font-size: 12px;">选填，用于接收通知</div>
           </el-form-item>
           <el-form-item label="身份">
             <el-input :value="userStore.user?.user_type === 'teacher' ? '教师' : '学生'" disabled />
@@ -306,8 +307,10 @@ const loadSubmissions = async () => {
 }
 
 const updateProfile = async () => {
-  if (!profileForm.value.email) {
-    ElMessage.warning('请输入邮箱')
+  // 邮箱选填：填了才校验格式
+  const email = profileForm.value.email.trim()
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    ElMessage.warning('邮箱格式不正确（也可以留空不填）')
     return
   }
 
@@ -315,7 +318,7 @@ const updateProfile = async () => {
   try {
     await updateUser({
       display_name: profileForm.value.display_name,  // 留空后端会回退为登录名
-      email: profileForm.value.email
+      email                                          // 邮箱选填，可为空串
     })
     await userStore.fetchUser()
     // 后端可能把空用户名回退为登录名，这里同步回表单

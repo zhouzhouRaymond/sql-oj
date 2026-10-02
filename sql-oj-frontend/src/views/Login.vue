@@ -44,15 +44,15 @@
             <div class="input-hint">展示用用户名，注册后也可在个人中心修改</div>
           </el-form-item>
 
-          <!-- ✅ 新增邮箱输入框 -->
-          <el-form-item v-if="!isLogin" label="邮箱" required>
+          <!-- ✅ 邮箱选填：填了才校验格式 -->
+          <el-form-item v-if="!isLogin" label="邮箱">
             <el-input
               v-model="form.email"
-              placeholder="请输入邮箱地址"
+              placeholder="选填，可不填"
               prefix-icon="Message"
               clearable
             />
-            <div class="input-hint">用于接收通知和找回密码</div>
+            <div class="input-hint">选填，用于接收通知和找回密码</div>
           </el-form-item>
 
           <el-form-item label="密码" required>
@@ -124,11 +124,11 @@ const validateForm = (): boolean => {
     return false
   }
   
-  // ✅ 注册时校验邮箱格式
-  if (!isLogin.value) {
+  // ✅ 邮箱选填：只在填了内容时校验格式
+  if (!isLogin.value && form.email) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!form.email || !emailRegex.test(form.email)) {
-      ElMessage.warning('请输入正确的邮箱格式')
+    if (!emailRegex.test(form.email)) {
+      ElMessage.warning('邮箱格式不正确（也可以留空不填）')
       return false
     }
   }

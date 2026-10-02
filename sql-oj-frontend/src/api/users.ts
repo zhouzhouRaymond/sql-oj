@@ -46,7 +46,7 @@ export const getUsers = (params?: {
 export const createUser = (data: {
   username: string
   display_name?: string
-  email: string
+  email?: string
   password: string
   user_type: 'student' | 'teacher'
   is_active?: boolean

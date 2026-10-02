@@ -17,8 +17,15 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ('username', 'display_name', 'email', 'password', 'user_type')
+        extra_kwargs = {
+            # 邮箱选填：不填也能注册
+            'email': {'required': False, 'allow_blank': True},
+        }
 
     def validate_display_name(self, value):
+        return (value or '').strip()
+
+    def validate_email(self, value):
         return (value or '').strip()
 
     def validate_user_type(self, value):
@@ -60,9 +67,14 @@ class UserSerializer(serializers.ModelSerializer):
             'display_name': {
                 'required': False, 'allow_blank': True, 'max_length': 50,
             },
+            # 邮箱选填：个人中心 / 账号管理都允许留空
+            'email': {'required': False, 'allow_blank': True},
         }
 
     def validate_display_name(self, value):
+        return (value or '').strip()
+
+    def validate_email(self, value):
         return (value or '').strip()
 
     def update(self, instance, validated_data):

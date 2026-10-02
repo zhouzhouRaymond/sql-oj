@@ -8,7 +8,7 @@ interface LoginData {
 interface RegisterData {
   username: string
   display_name?: string  // 自定义用户名（展示名），可留空
-  email: string
+  email?: string         // 邮箱选填
   password: string
   user_type: 'student' | 'teacher'
 }
