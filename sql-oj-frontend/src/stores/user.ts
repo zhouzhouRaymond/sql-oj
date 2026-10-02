@@ -14,6 +14,11 @@ export const useUserStore = defineStore('user', () => {
   // 真正的登录态：既要持有 token，也要有与之匹配的用户信息
   const isAuthenticated = computed(() => Boolean(token.value && user.value))
 
+  // 展示用用户名：优先自定义用户名，其次登录名（username 仅用于登录）
+  const displayName = computed(
+    () => user.value?.name || user.value?.display_name || user.value?.username || ''
+  )
+
   const setToken = (value: string | null) => {
     token.value = value
     if (value) {
@@ -101,7 +106,7 @@ export const useUserStore = defineStore('user', () => {
 
   return {
     user, token, isAuthenticated, sessionChecked,
-    isTeacher, isStudent,
+    isTeacher, isStudent, displayName,
     login, fetchUser, logout, restoreUser, restoreSession,
   }
 

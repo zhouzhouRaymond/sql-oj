@@ -12,8 +12,8 @@ export const getCurrentUser = () => {
   return request.get('/users/me/')
 }
 
-// ✅ 修改个人信息（邮箱等）
-export const updateUser = (data: { email?: string; username?: string }) => {
+// ✅ 修改个人信息（自定义用户名 / 邮箱）
+export const updateUser = (data: { email?: string; username?: string; display_name?: string }) => {
   return request.put('/users/me/', data)
 }
 
@@ -27,9 +27,7 @@ export const getUserStats = () => {
   return request.get('/users/me/stats/')
 }
 
-// ✅ 获取个人最近提交记录
-export const getRecentSubmissions = () => {
-  return request.get('/submissions/', {
-    params: { limit: 5, ordering: '-created_at' }
-  })
+// ✅ 获取个人提交记录（后端按提交时间倒序，每页 20 条）
+export const getMySubmissions = (params?: { page?: number }) => {
+  return request.get('/submissions/', { params })
 }

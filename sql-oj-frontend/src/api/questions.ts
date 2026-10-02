@@ -1,8 +1,25 @@
 import request from './request'
 
 // 获取题目列表
-export const getQuestions = (params?: { page?: number }) => {
+export const getQuestions = (params?: { page?: number; ordering?: string }) => {
   return request.get('/questions/', { params })
+}
+
+// 获取全部题目：后端分页（每页 20 条），这里自动翻页取完。
+// 供「考试组卷」等需要完整题目列表的下拉选择使用（否则只能选到前 20 道）。
+export const getAllQuestions = async (): Promise<any[]> => {
+  const all: any[] = []
+  const maxPages = 100 // 保险上限，避免分页异常时死循环
+  for (let page = 1; page <= maxPages; page += 1) {
+    const res = await request.get('/questions/', { params: { page, ordering: 'id' } })
+    const data = res.data || {}
+    // 兼容后端未开启分页（直接返回数组）的情况
+    if (Array.isArray(data)) return [...all, ...data]
+    const list = data.results || []
+    all.push(...list)
+    if (!data.next || list.length === 0) break
+  }
+  return all
 }
 
 // 获取题目详情

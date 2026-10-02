@@ -12,6 +12,6 @@ export const getSubmission = (id: number) => {
   return request.get(`/submissions/${id}/`)
 }
 
-export const getSubmissions = (params?: { question_id?: number }) => {
+export const getSubmissions = (params?: { question_id?: number; page?: number }) => {
   return request.get('/submissions/', { params })
 }
