@@ -31,10 +31,20 @@ class SubmissionSerializer(serializers.ModelSerializer):
             for case in cases
             if not case.get('passed', False)
         ]
+        # 答对（ACCEPTED）时额外返回各用例的实际输出，供前端直接展示运行结果；
+        # 未通过时不返回，避免提前泄露隐藏用例对应的结果数据。
+        case_outputs = []
+        if obj.execution_status == 'ACCEPTED':
+            case_outputs = [
+                {'index': idx + 1, 'actual_output': case.get('actual_output') or ''}
+                for idx, case in enumerate(cases)
+            ]
+
         return {
             'total': len(cases),
             'passed_count': len(cases) - len(failed_cases),
             'failed_cases': failed_cases,
+            'case_outputs': case_outputs,
             'error_message': raw.get('error_message') or '',
         }
 

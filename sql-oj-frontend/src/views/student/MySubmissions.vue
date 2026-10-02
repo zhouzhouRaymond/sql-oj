@@ -89,6 +89,48 @@
           <pre class="sql-detail">{{ caseItem.actual_output || '（空）' }}</pre>
         </div>
       </div>
+      <!-- ✅ 答对时直接展示运行结果（表格可能很宽，已支持横向滚动） -->
+      <div
+        class="detail-item"
+        v-if="currentDetail.execution_status === 'ACCEPTED' && caseOutputs.length > 0"
+      >
+        <strong>📤 运行结果：</strong>
+        <el-radio-group
+          v-if="caseOutputs.length > 1"
+          v-model="activeCaseIndex"
+          size="small"
+          class="case-output-tabs"
+        >
+          <el-radio-button
+            v-for="item in caseOutputs"
+            :key="item.index"
+            :value="item.index"
+          >
+            用例 {{ item.index }}
+          </el-radio-button>
+        </el-radio-group>
+        <div class="result-table-wrap">
+          <el-table
+            :data="resultTable.rows"
+            border
+            stripe
+            size="small"
+            :style="{ minWidth: resultTableMinWidth }"
+          >
+            <el-table-column
+              v-for="col in resultTable.columns"
+              :key="col.prop"
+              :prop="col.prop"
+              :label="col.label"
+              min-width="120"
+            />
+          </el-table>
+        </div>
+        <div v-if="resultTable.rows.length === 0" class="detail-summary">
+          查询结果为 0 行。
+        </div>
+      </div>
+
       <div class="detail-item" v-if="currentDetail.submission_time || currentDetail.created_at">
         <strong>提交时间：</strong>
         {{ formatDateTime(currentDetail.submission_time || currentDetail.created_at) }}
@@ -98,12 +140,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../../stores/user'
 import { getSubmission, getSubmissions } from '../../api/submissions'
 import { formatDateTime, formatRelativeTime } from '../../utils/time'
+import { parseResultSet } from '../../utils/resultSet'
 
 const router = useRouter()
 const route = useRoute()
@@ -119,6 +162,22 @@ const total = ref(0)
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const currentDetail = ref<any>({})
+
+// 答对时展示运行结果：把判题返回的结果集文本解析成表格
+const caseOutputs = computed(() => {
+  const details = currentDetail.value?.judge_details
+  return Array.isArray(details?.case_outputs) ? details.case_outputs : []
+})
+const activeCaseIndex = ref(1)
+const currentCaseOutput = computed(() => {
+  const item = caseOutputs.value.find((c: any) => c.index === activeCaseIndex.value)
+  return item?.actual_output || ''
+})
+const resultTable = computed(() => parseResultSet(currentCaseOutput.value))
+// 列较多时保持最小宽度，由外层容器横向滚动
+const resultTableMinWidth = computed(
+  () => `${Math.max(resultTable.value.columns.length * 140, 320)}px`
+)
 
 // 用于让「相对时间」随时间自动刷新
 const nowTick = ref(Date.now())
@@ -161,6 +220,7 @@ const viewDetail = async (row: any) => {
   if (!row?.id) return
   detailVisible.value = true
   detailLoading.value = true
+  activeCaseIndex.value = 1
   currentDetail.value = row
   try {
     const res = await getSubmission(row.id)
@@ -260,6 +320,19 @@ onUnmounted(() => {
 .case-label {
   font-size: 13px;
   color: #606266;
+}
+
+/* ✅ 答对时的运行结果：宽表格交给外层容器横向滚动 */
+.case-output-tabs {
+  margin: 6px 0;
+}
+.result-table-wrap {
+  margin-top: 6px;
+  overflow-x: auto;
+  border-radius: 6px;
+}
+.result-table-wrap .el-table {
+  border-radius: 6px;
 }
 
 /* ===== 窄窗口自适应 ===== */

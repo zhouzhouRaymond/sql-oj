@@ -121,6 +121,45 @@
               {{ result.judge_details.passed_count }} 个。
             </p>
 
+            <!-- ✅ 答对时直接展示运行结果（表格可能很宽，已支持横向滚动） -->
+            <template v-if="result.execution_status === 'ACCEPTED' && caseOutputs.length > 0">
+              <el-radio-group
+                v-if="caseOutputs.length > 1"
+                v-model="activeCaseIndex"
+                size="small"
+                class="case-output-tabs"
+              >
+                <el-radio-button
+                  v-for="item in caseOutputs"
+                  :key="item.index"
+                  :value="item.index"
+                >
+                  用例 {{ item.index }}
+                </el-radio-button>
+              </el-radio-group>
+
+              <div class="result-table-wrap">
+                <el-table
+                  :data="resultTable.rows"
+                  border
+                  stripe
+                  size="small"
+                  :style="{ minWidth: resultTableMinWidth }"
+                >
+                  <el-table-column
+                    v-for="col in resultTable.columns"
+                    :key="col.prop"
+                    :prop="col.prop"
+                    :label="col.label"
+                    min-width="120"
+                  />
+                </el-table>
+              </div>
+              <p v-if="resultTable.rows.length === 0" class="detail-note">
+                查询结果为 0 行。
+              </p>
+            </template>
+
             <template v-if="failedCases.length > 0">
               <div
                 v-for="caseItem in failedCases"
@@ -161,6 +200,7 @@ import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
 import { getSubmission, submitSQL } from '../../api/submissions'
 import SqlEditor from '../../components/SqlEditor.vue'
+import { parseResultSet } from '../../utils/resultSet'
 
 const route = useRoute()
 const router = useRouter()
@@ -264,6 +304,7 @@ const handleSubmit = async () => {
   }
 
   submitting.value = true
+  activeCaseIndex.value = 1
   try {
     const res = await submitSQL({
       question_id: questionId.value,
@@ -285,6 +326,7 @@ const handleSubmit = async () => {
 const resetCode = () => {
   sqlCode.value = ''
   result.value = null
+  activeCaseIndex.value = 1
 }
 
 const goBack = () => {
@@ -335,6 +377,27 @@ const failedCases = computed(() => {
   const details = result.value?.judge_details
   return Array.isArray(details?.failed_cases) ? details.failed_cases : []
 })
+
+// 答对时后端会返回各用例的实际输出，这里解析成表格直接展示运行结果
+const caseOutputs = computed(() => {
+  const details = result.value?.judge_details
+  return Array.isArray(details?.case_outputs) ? details.case_outputs : []
+})
+
+// 多用例时用按钮切换查看
+const activeCaseIndex = ref(1)
+
+const currentCaseOutput = computed(() => {
+  const item = caseOutputs.value.find((c: any) => c.index === activeCaseIndex.value)
+  return item?.actual_output || ''
+})
+
+const resultTable = computed(() => parseResultSet(currentCaseOutput.value))
+
+// 列较多时让表格保持最小宽度，由外层容器横向滚动，避免列被压扁
+const resultTableMinWidth = computed(
+  () => `${Math.max(resultTable.value.columns.length * 140, 320)}px`
+)
 
 onMounted(() => {
   loadQuestion()
@@ -584,6 +647,18 @@ onMounted(() => {
   margin: 4px 0 0;
   color: #909399;
   font-size: 12px;
+}
+
+/* ✅ 答对时的运行结果：宽表格交给外层容器横向滚动 */
+.case-output-tabs {
+  margin-bottom: 8px;
+}
+.result-table-wrap {
+  overflow-x: auto;
+  border-radius: 6px;
+}
+.result-table-wrap .el-table {
+  border-radius: 6px;
 }
 
 /* ===== 窄窗口自适应 ===== */
