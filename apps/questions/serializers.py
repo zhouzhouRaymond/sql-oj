@@ -25,14 +25,16 @@ class QuestionSerializer(serializers.ModelSerializer):
 
 
 class QuestionStudentSerializer(serializers.ModelSerializer):
-    """学生视角：不暴露正确答案和建表语句"""
-    test_cases = TestCaseSerializer(many=True, read_only=True)
+    """学生视角：不暴露参考答案、建表语句与隐藏测试用例。
+
+    注意：隐藏测试用例的 expected_output 绝不能返回给学生，
+    否则可以直接照着预期输出硬编码答案，判题形同虚设。
+    """
 
     class Meta:
         model = Question
         fields = (
             'id', 'title', 'description', 'difficulty', 'sample_input',
             'sample_output', 'teacher', 'created_at',
-            'test_cases',
         )
         read_only_fields = ('teacher', 'created_at')
