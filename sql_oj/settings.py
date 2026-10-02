@@ -70,6 +70,8 @@ INSTALLED_APPS = [
     # 第三方库
     'rest_framework',
     'rest_framework_simplejwt',
+    # 黑名单：修改密码时拉黑该用户已签发的 refresh token
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_filters',
     # 自定义应用
@@ -183,6 +185,13 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # 安全增强：token 内嵌入「密码哈希」声明，认证时校验。
+    # 这样修改密码后，旧的 access / refresh token 会立即失效（无需等过期）。
+    # 注意：开启后此前签发的旧 token（没有该声明）也会被拒绝，用户需重新登录一次。
+    'CHECK_REVOKE_TOKEN': True,
+    # 使用 refresh token 换取新 token 时，旧 refresh token 立即进入黑名单（单次有效）
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
 }
 
 CORS_ALLOW_ALL_ORIGINS = True  # 开发阶段全开

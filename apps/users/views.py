@@ -1,6 +1,9 @@
 from rest_framework import generics, viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken, OutstandingToken,
+)
 
 from .models import User
 from .serializers import RegisterSerializer, UserSerializer
@@ -28,7 +31,8 @@ class RegisterView(generics.CreateAPIView):
 
 class UserViewSet(viewsets.ModelViewSet):
     """用户管理 ViewSet"""
-    queryset = User.objects.all()
+    # 固定排序，避免分页时顺序不稳定导致学生列表出现重复/遗漏
+    queryset = User.objects.all().order_by('id')
     serializer_class = UserSerializer
 
     def get_permissions(self):
@@ -55,6 +59,44 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data)
 
+    @action(detail=False, methods=['post'], url_path='change-password')
+    def change_password(self, request):
+        """修改当前登录用户密码（需校验原密码）"""
+        old_password = request.data.get('old_password') or ''
+        new_password = request.data.get('new_password') or ''
+
+        if not old_password or not new_password:
+            return Response(
+                {'error': '原密码和新密码均为必填'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not request.user.check_password(old_password):
+            return Response(
+                {'error': '原密码不正确'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if len(new_password) < 6:
+            return Response(
+                {'error': '新密码至少 6 位'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if new_password == old_password:
+            return Response(
+                {'error': '新密码不能与原密码相同'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        request.user.set_password(new_password)
+        request.user.save(update_fields=['password'])
+
+        # 安全增强：把该用户已签发的 refresh token 全部拉黑，
+        # 使其在过期前也不能再换取新的 access token（配合 CHECK_REVOKE_TOKEN，
+        # 旧的 access token 同样会因密码哈希声明不匹配而立即失效）。
+        for token in OutstandingToken.objects.filter(user=request.user):
+            BlacklistedToken.objects.get_or_create(token=token)
+
+        return Response({'message': '密码修改成功，请使用新密码重新登录'})
+
     @action(detail=False, methods=['get'], url_path='me/stats')
     def my_stats(self, request):
         """当前用户的个人统计数据"""
@@ -65,6 +107,8 @@ class UserViewSet(viewsets.ModelViewSet):
             total_submissions = Submission.objects.count()
             return Response({
                 'username': user.username,
+                'display_name': user.display_name,
+                'name': user.name,
                 'user_type': 'teacher',
                 'questions_created': Question.objects.filter(teacher=user).count(),
                 'exams_created': Exam.objects.filter(teacher=user).count(),
@@ -87,6 +131,8 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return Response({
             'username': user.username,
+            'display_name': user.display_name,
+            'name': user.name,
             'user_type': user.user_type,
             'total_submissions': total,
             'passed': passed,
