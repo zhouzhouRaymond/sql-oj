@@ -245,5 +245,33 @@ onUnmounted(() => {
   display: flex;
   gap: 10px;
   justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 900px) {
+  .exam-panel {
+    padding: 12px;
+  }
+  .exam-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 16px;
+  }
+  .timer {
+    font-size: 18px;
+  }
+  .exam-content {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .questions-nav {
+    width: 100%;
+  }
+  .question-area {
+    /* 允许收缩，避免长内容撑破页面 */
+    min-width: 0;
+    padding: 12px;
+  }
 }
 </style>

@@ -6,25 +6,26 @@
     </div>
 
     <el-table :data="submissions" v-loading="loading" stripe>
-      <el-table-column prop="id" label="提交ID" width="80" />
-      <el-table-column prop="question" label="题目ID" width="80" />
-      <el-table-column prop="submitted_sql" label="提交的SQL" min-width="250">
-        <template #default="{ row }">
-          <div class="sql-preview">{{ truncateSQL(row.submitted_sql) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column prop="execution_status" label="状态" width="120">
+      <!-- 全部列使用 min-width：表格自动撑满父容器，多余宽度按比例分配到各列 -->
+      <el-table-column prop="id" label="提交ID" min-width="90" />
+      <el-table-column prop="question" label="题目ID" min-width="90" />
+      <el-table-column prop="execution_status" label="状态" min-width="110">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.execution_status)">
             {{ row.execution_status || 'PENDING' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="score" label="得分" width="80" />
-      <!-- ✅ 新增：提交时间列 -->
-      <el-table-column prop="submission_time" label="提交时间" width="180" />
-      <!-- ✅ 新增：查看详情操作 -->
-      <el-table-column label="操作" width="100">
+      <el-table-column prop="score" label="得分" min-width="90" />
+      <el-table-column label="提交时间" min-width="150">
+        <template #default="{ row }">
+          <!-- 人类友好的相对时间，悬停显示完整时间 -->
+          <span :title="formatDateTime(row.submission_time || row.created_at)">
+            {{ formatRelativeTime(row.submission_time || row.created_at, nowTick) }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" min-width="110" align="center">
         <template #default="{ row }">
           <el-button type="primary" link @click="viewDetail(row)">查看详情</el-button>
         </template>
@@ -51,7 +52,8 @@
       </div>
       <div class="detail-item">
         <strong>提交的 SQL：</strong>
-        <pre class="sql-detail">{{ currentDetail.submitted_sql || '（空）' }}</pre>
+        <!-- 打开弹窗时才请求详情接口获取 SQL（列表接口不返回该字段） -->
+        <pre class="sql-detail">{{ detailLoading ? '加载中…' : (currentDetail.submitted_sql || '（空）') }}</pre>
       </div>
       <div class="detail-item">
         <strong>判题状态：</strong>
@@ -66,20 +68,25 @@
         <strong>详细结果：</strong>
         <pre class="sql-detail">{{ JSON.stringify(currentDetail.details, null, 2) }}</pre>
       </div>
-      <div class="detail-item" v-if="currentDetail.created_at">
-        <strong>提交时间：</strong>{{ currentDetail.created_at }}
+      <div class="detail-item" v-if="currentDetail.submission_time || currentDetail.created_at">
+        <strong>提交时间：</strong>
+        {{ formatDateTime(currentDetail.submission_time || currentDetail.created_at) }}
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getSubmissions } from '../../api/submissions'
+import { useUserStore } from '../../stores/user'
+import { getSubmission, getSubmissions } from '../../api/submissions'
+import { formatDateTime, formatRelativeTime } from '../../utils/time'
 
 const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
 
 const submissions = ref<any[]>([])
 const loading = ref(false)
@@ -89,13 +96,12 @@ const total = ref(0)
 
 // ✅ 详情弹窗相关
 const detailVisible = ref(false)
+const detailLoading = ref(false)
 const currentDetail = ref<any>({})
 
-const truncateSQL = (sql: string) => {
-  if (!sql) return ''
-  if (sql.length > 80) return sql.substring(0, 80) + '...'
-  return sql
-}
+// 用于让「相对时间」随时间自动刷新
+const nowTick = ref(Date.now())
+let clockTimer: number | undefined
 
 const statusTagType = (status: string) => {
   switch (status) {
@@ -119,18 +125,45 @@ const loadSubmissions = async () => {
   }
 }
 
+// 返回上一级：优先回到来源页面（入口通过 ?from= 传入），否则按身份回到各自首页
 const goBack = () => {
-  router.push('/questions')
+  const from = route.query.from
+  if (typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')) {
+    router.push(from)
+    return
+  }
+  router.push(userStore.user?.user_type === 'teacher' ? '/teacher' : '/questions')
 }
 
-// ✅ 查看详情
-const viewDetail = (row: any) => {
-  currentDetail.value = row
+// ✅ 查看详情：先展示列表中的基础信息，再按 id 懒加载完整详情（含 submitted_sql）
+const viewDetail = async (row: any) => {
+  if (!row?.id) return
   detailVisible.value = true
+  detailLoading.value = true
+  currentDetail.value = row
+  try {
+    const res = await getSubmission(row.id)
+    currentDetail.value = { ...row, ...(res.data || {}) }
+  } catch (error) {
+    ElMessage.error('加载提交详情失败')
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 onMounted(() => {
   loadSubmissions()
+  // 每分钟刷新一次相对时间显示
+  clockTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (clockTimer !== undefined) {
+    window.clearInterval(clockTimer)
+    clockTimer = undefined
+  }
 })
 </script>
 
@@ -149,11 +182,6 @@ onMounted(() => {
   padding: 16px 24px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.sql-preview {
-  font-family: monospace;
-  font-size: 12px;
-  color: #606266;
 }
 .pagination {
   margin-top: 20px;
@@ -177,5 +205,20 @@ onMounted(() => {
   margin: 4px 0 0 0;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .submissions-container {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .header h1 {
+    font-size: 18px;
+  }
 }
 </style>

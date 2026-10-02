@@ -13,7 +13,7 @@
         </template>
         <div class="avatar-section">
           <el-avatar :size="80" :src="userAvatar">
-            {{ userStore.user?.username?.charAt(0)?.toUpperCase() }}
+            {{ userStore.displayName?.charAt(0)?.toUpperCase() }}
           </el-avatar>
           <div class="user-badge">
             <el-tag :type="userStore.user?.user_type === 'teacher' ? 'warning' : 'success'">
@@ -23,8 +23,18 @@
         </div>
 
         <el-form :model="profileForm" label-width="80px" class="profile-form">
-          <el-form-item label="用户名">
+          <el-form-item label="登录名">
             <el-input v-model="profileForm.username" disabled />
+            <div style="margin-top: 4px; color: #909399; font-size: 12px;">登录名用于登录，不可修改</div>
+          </el-form-item>
+          <el-form-item label="用户名">
+            <el-input
+              v-model="profileForm.display_name"
+              placeholder="请输入用户名（留空则与登录名相同）"
+              maxlength="50"
+              clearable
+            />
+            <div style="margin-top: 4px; color: #909399; font-size: 12px;">展示用用户名，可自定义</div>
           </el-form-item>
           <el-form-item label="邮箱">
             <el-input v-model="profileForm.email" placeholder="请输入邮箱" />
@@ -36,6 +46,7 @@
             <el-button type="primary" @click="updateProfile" :loading="updating">
               保存修改
             </el-button>
+            <el-button @click="openPasswordDialog">🔒 修改密码</el-button>
           </el-form-item>
         </el-form>
       </el-card>
@@ -76,40 +87,117 @@
           </template>
         </div>
 
-        <!-- 最近提交记录（仅学生可见） -->
+        <!-- 提交记录（仅学生可见）：显示全部记录，按时间由近到远，每页 20 条 -->
         <div v-if="!isTeacher" class="recent-submissions">
-          <h4>📝 最近提交</h4>
+          <h4>📝 提交记录</h4>
           <el-table :data="recentSubmissions" v-loading="submissionsLoading" size="small">
-            <el-table-column prop="question" label="题目ID" width="70" />
-            <el-table-column prop="execution_status" label="状态" width="100">
+            <!-- 使用 min-width 让列随容器浮动，表格始终撑满所在卡片 -->
+            <el-table-column prop="question" label="题目ID" min-width="90" />
+            <el-table-column prop="execution_status" label="状态" min-width="120">
               <template #default="{ row }">
                 <el-tag :type="statusTagType(row.execution_status)" size="small">
                   {{ row.execution_status || 'PENDING' }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="score" label="得分" width="60" />
-            <el-table-column prop="submission_time" label="提交时间" width="160">
+            <el-table-column prop="score" label="得分" min-width="90" />
+            <el-table-column label="提交时间" min-width="150">
               <template #default="{ row }">
-                {{ row.submission_time || row.created_at || '-' }}
+                <!-- 人类友好的相对时间，悬停显示完整时间 -->
+                <span :title="formatDateTime(row.submission_time || row.created_at)">
+                  {{ formatRelativeTime(row.submission_time || row.created_at, nowTick) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" min-width="130" align="center">
+              <template #default="{ row }">
+                <el-button type="primary" link size="small" @click="viewCode(row)">
+                  查看提交代码
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
-          <div v-if="recentSubmissions.length === 0" class="empty-hint">
+          <div v-if="!submissionsLoading && recentSubmissions.length === 0" class="empty-hint">
             暂无提交记录
+          </div>
+          <div v-if="total > 0" class="pagination">
+            <el-pagination
+              v-model:current-page="currentPage"
+              :page-size="pageSize"
+              :total="total"
+              layout="prev, pager, next, total"
+              small
+              @current-change="loadSubmissions"
+            />
           </div>
         </div>
       </el-card>
     </div>
+
+    <!-- 🔒 修改密码浮窗 -->
+    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="420px">
+      <el-form :model="passwordForm" label-width="90px">
+        <el-form-item label="登录名">
+          <el-input :value="userStore.user?.username" disabled />
+        </el-form-item>
+        <el-form-item label="原密码" required>
+          <el-input
+            v-model="passwordForm.old_password"
+            type="password"
+            show-password
+            placeholder="请输入原密码"
+          />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <el-input
+            v-model="passwordForm.new_password"
+            type="password"
+            show-password
+            placeholder="请输入新密码（至少 6 位）"
+          />
+        </el-form-item>
+        <el-form-item label="确认新密码" required>
+          <el-input
+            v-model="passwordForm.confirm_password"
+            type="password"
+            show-password
+            placeholder="请再次输入新密码"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="passwordSaving" @click="submitPassword">
+          确定修改
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 提交代码浮窗 -->
+    <el-dialog v-model="codeDialogVisible" title="提交代码" width="640px">
+      <div class="code-meta">
+        <span>题目 ID：{{ currentSubmission.question ?? '-' }}</span>
+        <span>状态：{{ currentSubmission.execution_status || 'PENDING' }}</span>
+        <span>得分：{{ currentSubmission.score ?? 0 }}</span>
+        <span>提交时间：{{ formatDateTime(currentSubmission.submission_time || currentSubmission.created_at) }}</span>
+      </div>
+      <!-- 打开浮窗时才请求详情接口获取 SQL（列表接口不返回该字段） -->
+      <pre class="code-block">{{ codeLoading ? '加载中…' : (currentSubmission.submitted_sql || '（无提交代码）') }}</pre>
+      <template #footer>
+        <el-button @click="codeDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
-import { updateUser, getUserStats, getRecentSubmissions } from '../api/users'
+import { updateUser, getUserStats, getMySubmissions, changePassword } from '../api/users'
+import { getSubmission } from '../api/submissions'
+import { formatDateTime, formatRelativeTime } from '../utils/time'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -117,7 +205,8 @@ const userStore = useUserStore()
 const isTeacher = computed(() => userStore.user?.user_type === 'teacher')
 
 const profileForm = ref({
-  username: userStore.user?.username || '',
+  username: userStore.user?.username || '',          // 登录名（只读展示）
+  display_name: userStore.user?.display_name || '',  // 自定义用户名（可修改）
   email: userStore.user?.email || ''
 })
 
@@ -133,6 +222,44 @@ const stats = ref({
 const recentSubmissions = ref<any[]>([])
 const updating = ref(false)
 const submissionsLoading = ref(false)
+
+// 🔒 修改密码
+const passwordDialogVisible = ref(false)
+const passwordSaving = ref(false)
+const passwordForm = ref({
+  old_password: '',
+  new_password: '',
+  confirm_password: ''
+})
+// 提交记录分页：每页 20 条
+const currentPage = ref(1)
+const pageSize = 20
+const total = ref(0)
+
+// 提交代码浮窗
+const codeDialogVisible = ref(false)
+const codeLoading = ref(false)
+const currentSubmission = ref<any>({})
+
+// 用于让「相对时间」随时间自动刷新
+const nowTick = ref(Date.now())
+let clockTimer: number | undefined
+
+// 查看某次提交的 SQL 代码：列表接口不返回 submitted_sql，点开时按 id 懒加载
+const viewCode = async (row: any) => {
+  if (!row?.id) return
+  codeDialogVisible.value = true
+  codeLoading.value = true
+  currentSubmission.value = row || {}
+  try {
+    const res = await getSubmission(row.id)
+    currentSubmission.value = { ...row, ...(res.data || {}) }
+  } catch (error) {
+    ElMessage.error('加载提交代码失败')
+  } finally {
+    codeLoading.value = false
+  }
+}
 
 const userAvatar = computed(() => {
   return userStore.user?.avatar || ''
@@ -155,15 +282,24 @@ const loadStats = async () => {
   }
 }
 
-const loadRecentSubmissions = async () => {
+// 加载提交记录：显示全部记录，后端按提交时间倒序，每页 20 条
+const loadSubmissions = async () => {
   submissionsLoading.value = true
   try {
-    const res = await getRecentSubmissions()
-    const data = res.data.results || res.data || []
-    recentSubmissions.value = data.slice(0, 5)
+    const res = await getMySubmissions({ page: currentPage.value })
+    const data = res.data || {}
+    if (Array.isArray(data)) {
+      // 兜底：接口未开启分页时（直接返回数组）
+      recentSubmissions.value = data
+      total.value = data.length
+    } else {
+      recentSubmissions.value = data.results || []
+      total.value = data.count || 0
+    }
   } catch (error) {
-    console.log('📝 最近提交接口暂不可用（后端未实现）')
+    console.log('📝 提交记录接口暂不可用')
     recentSubmissions.value = []
+    total.value = 0
   } finally {
     submissionsLoading.value = false
   }
@@ -177,14 +313,59 @@ const updateProfile = async () => {
 
   updating.value = true
   try {
-    await updateUser({ email: profileForm.value.email })
+    await updateUser({
+      display_name: profileForm.value.display_name,  // 留空后端会回退为登录名
+      email: profileForm.value.email
+    })
     await userStore.fetchUser()
+    // 后端可能把空用户名回退为登录名，这里同步回表单
+    profileForm.value.display_name = userStore.user?.display_name || ''
     ElMessage.success('个人信息已更新 ✅')
   } catch (error: any) {
     const msg = error.response?.data?.error || '更新失败，请重试'
     ElMessage.error(msg)
   } finally {
     updating.value = false
+  }
+}
+
+// 🔒 打开修改密码浮窗（清空上次输入）
+const openPasswordDialog = () => {
+  passwordForm.value = { old_password: '', new_password: '', confirm_password: '' }
+  passwordDialogVisible.value = true
+}
+
+// 🔒 提交修改密码：成功后退出登录，强制用新密码重新登录
+const submitPassword = async () => {
+  const { old_password, new_password, confirm_password } = passwordForm.value
+  if (!old_password) {
+    ElMessage.warning('请输入原密码')
+    return
+  }
+  if (!new_password || new_password.length < 6) {
+    ElMessage.warning('新密码至少 6 位')
+    return
+  }
+  if (new_password !== confirm_password) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  if (new_password === old_password) {
+    ElMessage.warning('新密码不能与原密码相同')
+    return
+  }
+
+  passwordSaving.value = true
+  try {
+    await changePassword({ old_password, new_password })
+    ElMessage.success('密码修改成功，请用新密码重新登录')
+    passwordDialogVisible.value = false
+    userStore.logout()
+    router.push('/login')
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.error || '修改密码失败，请重试')
+  } finally {
+    passwordSaving.value = false
   }
 }
 
@@ -207,7 +388,18 @@ const statusTagType = (status: string) => {
 
 onMounted(() => {
   loadStats()
-  loadRecentSubmissions()
+  loadSubmissions()
+  // 每分钟刷新一次相对时间显示
+  clockTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (clockTimer !== undefined) {
+    window.clearInterval(clockTimer)
+    clockTimer = undefined
+  }
 })
 </script>
 
@@ -238,6 +430,8 @@ onMounted(() => {
   gap: 20px;
   max-width: 1200px;
   margin: 0 auto;
+  /* 卡片高度各自按内容自适应，不被右侧更高的卡片拉伸 */
+  align-items: flex-start;
 }
 .info-card {
   flex: 1;
@@ -297,5 +491,56 @@ onMounted(() => {
   text-align: center;
   color: #c0c4cc;
   padding: 20px 0;
+}
+.pagination {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ===== 提交代码浮窗 ===== */
+.code-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #606266;
+}
+.code-block {
+  margin: 0;
+  padding: 12px 14px;
+  background-color: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 900px) {
+  .profile-container {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .profile-content {
+    flex-direction: column;
+    /* 纵向堆叠时恢复正常拉伸，卡片占满整行宽度 */
+    align-items: stretch;
+  }
+  .info-card,
+  .stats-card {
+    /* 允许收缩，避免表格撑破页面 */
+    min-width: 0;
+  }
 }
 </style>

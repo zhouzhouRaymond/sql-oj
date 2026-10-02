@@ -177,8 +177,9 @@ const loadResult = async () => {
   }
 }
 
+// 跳转「我的提交」，带上来源路径，便于在该页「返回」时回到本页
 const goToSubmissions = () => {
-  router.push('/submissions')
+  router.push({ path: '/submissions', query: { from: route.fullPath } })
 }
 
 const viewSubmission = async (submissionId: number) => {
@@ -252,5 +253,27 @@ onMounted(() => {
   text-align: center;
   color: #909399;
   padding: 20px;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .exam-result-container {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .header h1 {
+    font-size: 18px;
+  }
+  .total-score .value {
+    font-size: 34px;
+  }
+  .score-detail {
+    gap: 16px;
+    flex-wrap: wrap;
+  }
 }
 </style>

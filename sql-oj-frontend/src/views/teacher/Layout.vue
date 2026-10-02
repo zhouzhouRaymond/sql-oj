@@ -24,7 +24,7 @@
         </el-menu-item>
       </el-menu>
       <div class="user-info">
-        <span>{{ userStore.user?.username }}</span>
+        <span>{{ userStore.displayName }}</span>
         <el-button type="danger" text @click="handleLogout">退出</el-button>
       </div>
     </div>
@@ -114,6 +114,31 @@ const handleLogout = () => {
 }
 .main-content {
   flex: 1;
+  /* 关键：允许收缩，避免内部宽表格把整页撑出横向滚动条 */
+  min-width: 0;
   background-color: #f0f2f5;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 900px) {
+  .teacher-layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+  }
+  .sidebar :deep(.el-menu) {
+    display: flex;
+    flex-wrap: wrap;
+    border-right: none;
+  }
+  .sidebar :deep(.el-menu-item) {
+    flex: 1 1 auto;
+    height: 44px;
+    line-height: 44px;
+  }
+  .user-info {
+    padding: 10px 20px;
+  }
 }
 </style>

@@ -4,6 +4,15 @@
     <div class="header">
       <el-button @click="goBack">← 返回题目列表</el-button>
       <h1>📝 题目详情</h1>
+      <el-button
+        class="my-submissions-btn"
+        type="primary"
+        plain
+        size="small"
+        @click="goToMySubmissions"
+      >
+        📝 我的提交
+      </el-button>
     </div>
 
     <!-- 主要内容 -->
@@ -19,9 +28,11 @@
           </div>
         </template>
 
-        <!-- ✅ 题目描述：渲染 Markdown -->
+        <!-- ✅ 题目描述：渲染 Markdown（右侧提供跳转到「我的提交」的入口） -->
         <div class="section">
-          <h3>📖 题目描述</h3>
+          <div class="section-header">
+            <h3>📖 题目描述</h3>
+          </div>
           <div class="markdown-body" v-html="renderedDescription"></div>
         </div>
 
@@ -237,6 +248,11 @@ const goBack = () => {
   router.push('/questions')
 }
 
+// 跳转到「我的提交」页面（带上来源路径，便于在该页「返回」时回到本题详情）
+const goToMySubmissions = () => {
+  router.push({ path: '/submissions', query: { from: route.fullPath } })
+}
+
 const difficultyTagType = (difficulty: string) => {
   switch (difficulty) {
     case 'easy': return 'success'
@@ -298,6 +314,10 @@ onMounted(() => {
   font-size: 20px;
   color: #2d3748;
 }
+/* 顶栏右侧操作按钮 */
+.my-submissions-btn {
+  margin-left: auto;
+}
 
 .content {
   max-width: 1000px;
@@ -326,6 +346,17 @@ onMounted(() => {
   font-weight: 600;
   color: #2d3748;
   margin-bottom: 8px;
+}
+/* 区块标题行：左侧标题 + 右侧操作按钮 */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.section-header h3 {
+  margin: 0;
 }
 
 /* ✅ Markdown 渲染样式（与 GitHub 风格一致） */
@@ -454,5 +485,28 @@ onMounted(() => {
   overflow-x: auto;
   font-size: 13px;
   border: 1px solid #e2e8f0;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .question-detail-container {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  .sample-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .section-header {
+    flex-wrap: wrap;
+  }
 }
 </style>

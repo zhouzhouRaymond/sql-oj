@@ -302,4 +302,34 @@ onMounted(() => {
 .test-case-row .el-textarea {
   flex: 1;
 }
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .create-container {
+    padding: 12px;
+  }
+  .create-container :deep(.el-form) {
+    padding: 16px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .test-case-row {
+    flex-direction: column;
+  }
+  /* 标签置顶：避免窄屏下输入框被 120px 宽的标签挤扁 */
+  .create-container :deep(.el-form-item) {
+    display: block;
+  }
+  .create-container :deep(.el-form-item__label) {
+    width: auto !important;
+    text-align: left;
+    padding-right: 0;
+  }
+  .create-container :deep(.el-form-item__content) {
+    margin-left: 0 !important;
+  }
+}
 </style>

@@ -147,7 +147,7 @@ const loadStudentStats = async () => {
 
     studentRanking.value = data.map((item: any, index: number) => ({
       rank: index + 1,
-      username: item.username || item.student_name || `用户 ${item.user_id || item.id}`,
+      username: item.name || item.username || item.student_name || `用户 ${item.user_id || item.id}`,
       pass_rate: toPercent(item.pass_rate ?? item.rate ?? 0),
       passed: safeNumber(item.passed ?? item.passed_count),
       total_submissions: safeNumber(item.total_submissions ?? item.submissions)

@@ -3,7 +3,7 @@
     <div class="header">
       <h1>📋 我的考试</h1>
       <div class="user-info">
-        <span>欢迎，{{ userStore.user?.username }}</span>
+        <span>欢迎，{{ userStore.displayName }}</span>
         <el-button type="primary" link @click="goToQuestions">← 返回题库</el-button>
         <el-button type="danger" size="small" @click="handleLogout">退出</el-button>
       </div>
@@ -78,7 +78,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '../../stores/user'
-import { getExams } from '../../api/exams'
+import { getAllExams } from '../../api/exams'
 import { getSubmissions } from '../../api/submissions'
 
 const router = useRouter()
@@ -114,12 +114,13 @@ const historyExams = computed(() => {
 const loadExams = async () => {
   loading.value = true
   try {
-    const [examRes, subRes] = await Promise.all([
-      getExams(),
+    const [rawExamList, subRes] = await Promise.all([
+      getAllExams(),
       getSubmissions()
     ])
 
-    let rawExams = examRes.data.results || examRes.data || []
+    // 考试可能超过一页（后端每页 20 条），getAllExams 已自动翻页取全量
+    let rawExams = rawExamList
     // 确保每个考试对象都有数字 id，兼容 exam_id 字段
     exams.value = rawExams.map((exam: any) => ({
       ...exam,
@@ -199,5 +200,21 @@ onMounted(() => {
 }
 .exam-tabs {
   margin-bottom: 20px;
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .exam-list-container {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 0 4px;
+  }
+  .user-info {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
 }
 </style>

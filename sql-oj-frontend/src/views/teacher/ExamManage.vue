@@ -193,8 +193,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getExams, createExam as createExamApi, deleteExam, getExamResult, updateExam as updateExamApi } from '../../api/exams'
-import { getQuestions } from '../../api/questions'
+import { getAllExams, createExam as createExamApi, deleteExam, getExamResult, updateExam as updateExamApi } from '../../api/exams'
+import { getAllQuestions } from '../../api/questions'
 
 // ===== 防死循环锁 =====
 let isLoadingExams = false
@@ -244,8 +244,8 @@ const loadExams = async () => {
   loading.value = true
 
   try {
-    const res = await getExams()
-    exams.value = res.data.results || res.data || []
+    // 考试列表可能超过一页（后端每页 20 条），这里自动翻页取全量
+    exams.value = await getAllExams()
   } catch (error) {
     if (exams.value.length === 0) {
       ElMessage.error('加载考试列表失败')
@@ -258,8 +258,8 @@ const loadExams = async () => {
 
 const loadQuestions = async () => {
   try {
-    const res = await getQuestions()
-    allQuestions.value = res.data.results || res.data || []
+    // 组卷需要完整题目列表（后端每页 20 条），这里自动翻页取全量
+    allQuestions.value = await getAllQuestions()
   } catch (error) {
     ElMessage.error('加载题目列表失败')
   }
@@ -416,7 +416,7 @@ const viewRanking = async (examId: number) => {
     // ✅ 处理 ranking 列表中的字段：total → score，student__username → student_name
     rankings.value = rankingsList.map((item: any, index: number) => ({
       rank: index + 1,
-      student_name: item.student_name || item.student__username || item.username || `学生 ${item.student_id || item.student__id || ''}`,
+      student_name: item.student_name || item.name || item.student__username || item.username || `学生 ${item.student_id || item.student__id || ''}`,
       score: item.score ?? item.total ?? 0,   // total 对应后端返回的得分
       submitted_at: item.submitted_at || '-'
     }))
@@ -561,5 +561,23 @@ onMounted(() => {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* ===== 窄窗口自适应 ===== */
+@media (max-width: 768px) {
+  .exam-manage {
+    padding: 12px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .question-item {
+    flex-wrap: wrap;
+  }
+  .add-question-row {
+    flex-wrap: wrap;
+  }
 }
 </style>

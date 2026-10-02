@@ -22,14 +22,26 @@
         </div>
 
         <el-form :model="form" label-position="top" @submit.prevent="handleSubmit">
-          <el-form-item label="用户名" required>
+          <el-form-item label="登录名" required>
             <el-input
               v-model="form.username"
-              placeholder="请输入用户名（至少 3 位）"
+              placeholder="请输入登录名（至少 3 位）"
               prefix-icon="User"
               clearable
             />
-            <div class="input-hint">用户名至少 3 个字符，仅限字母、数字</div>
+            <div class="input-hint">登录名用于登录，至少 3 个字符，仅限字母、数字</div>
+          </el-form-item>
+
+          <!-- ✅ 注册时可自定义用户名（展示名），留空则与登录名相同 -->
+          <el-form-item v-if="!isLogin" label="用户名">
+            <el-input
+              v-model="form.display_name"
+              placeholder="请输入用户名（可留空，默认与登录名相同）"
+              prefix-icon="Avatar"
+              clearable
+              maxlength="50"
+            />
+            <div class="input-hint">展示用用户名，注册后也可在个人中心修改</div>
           </el-form-item>
 
           <!-- ✅ 新增邮箱输入框 -->
@@ -99,8 +111,9 @@ const isLogin = ref(true)
 const loading = ref(false)
 
 const form = reactive({
-  username: '',
-  email: '',        // ✅ 新增邮箱字段
+  username: '',      // 登录名（唯一，用于登录）
+  display_name: '',  // 自定义用户名（展示名，注册时可留空）
+  email: '',
   password: '',
   user_type: 'student' as 'student' | 'teacher'
 })
@@ -108,7 +121,7 @@ const form = reactive({
 // 表单校验（前端基础校验）
 const validateForm = (): boolean => {
   if (!form.username || form.username.length < 3) {
-    ElMessage.warning('用户名至少需要 3 个字符')
+    ElMessage.warning('登录名至少需要 3 个字符')
     return false
   }
   
@@ -158,7 +171,7 @@ const handleLogin = async () => {
       router.push('/questions')
     }
   } catch (error: any) {
-    const msg = error.response?.data?.error || '登录失败，请检查用户名和密码'
+    const msg = error.response?.data?.error || '登录失败，请检查登录名和密码'
     ElMessage.error(msg)
   }
 }
@@ -168,7 +181,8 @@ const handleRegister = async () => {
   try {
     await register({
       username: form.username,
-      email: form.email,           // ✅ 使用用户输入的邮箱
+      display_name: form.display_name.trim(),   // ✅ 自定义用户名（可留空，后端回退为登录名）
+      email: form.email,
       password: form.password,
       user_type: form.user_type
     })
@@ -176,6 +190,7 @@ const handleRegister = async () => {
     isLogin.value = true
     form.password = ''
     form.email = ''
+    form.display_name = ''
   } catch (error: any) {
     const data = error.response?.data
     let msg = '注册失败，请重试'
@@ -186,11 +201,11 @@ const handleRegister = async () => {
       if (data.username) {
         const err = Array.isArray(data.username) ? data.username[0] : data.username
         if (err.includes('already exists') || err.includes('已存在')) {
-          msg = '❌ 用户名已存在，请换一个'
+          msg = '❌ 登录名已存在，请换一个'
         } else if (err.includes('required')) {
-          msg = '❌ 用户名为必填项'
+          msg = '❌ 登录名为必填项'
         } else if (err.includes('invalid') || err.includes('只允许')) {
-          msg = '❌ 用户名格式不正确，仅限字母、数字'
+          msg = '❌ 登录名格式不正确，仅限字母、数字'
         } else {
           msg = `❌ ${err}`
         }
@@ -240,7 +255,9 @@ const toggleMode = () => {
 <style scoped>
 /* ===== 页面整体布局 ===== */
 .login-page {
-  height: 100vh;
+  /* 用 min-height + padding：窗口过矮时页面可滚动，内容不会被裁掉 */
+  min-height: 100vh;
+  padding: 24px 16px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -409,6 +426,7 @@ const toggleMode = () => {
   .login-box {
     flex-direction: column;
     width: 95vw;
+    max-width: 95vw;
     min-height: auto;
   }
   .login-banner {
@@ -419,6 +437,13 @@ const toggleMode = () => {
   }
   .login-form {
     padding: 30px 24px;
+  }
+}
+
+/* 窗口过矮时顶部对齐，保证表单可完整滚动查看 */
+@media (max-height: 680px) {
+  .login-page {
+    align-items: flex-start;
   }
 }
 </style>
