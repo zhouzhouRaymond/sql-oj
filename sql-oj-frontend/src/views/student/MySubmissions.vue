@@ -64,9 +64,30 @@
       <div class="detail-item">
         <strong>得分：</strong>{{ currentDetail.score ?? 0 }}
       </div>
-      <div class="detail-item" v-if="currentDetail.details">
-        <strong>详细结果：</strong>
-        <pre class="sql-detail">{{ JSON.stringify(currentDetail.details, null, 2) }}</pre>
+      <!-- 判题明细：未通过的测试用例（后端仅返回序号 + 实际输出 + 错误信息） -->
+      <div class="detail-item" v-if="currentDetail.judge_details">
+        <strong>
+          {{ currentDetail.execution_status === 'ACCEPTED' ? '✅ 用例通过情况：' : '❌ 失败的测试用例：' }}
+        </strong>
+        <div v-if="currentDetail.judge_details.error_message" class="detail-error">
+          {{ currentDetail.judge_details.error_message }}
+        </div>
+        <div class="detail-summary">
+          共 {{ currentDetail.judge_details.total }} 个测试用例，通过
+          {{ currentDetail.judge_details.passed_count }} 个。
+        </div>
+        <div
+          v-for="caseItem in (currentDetail.judge_details.failed_cases || [])"
+          :key="caseItem.index"
+          class="failed-case"
+        >
+          <div class="failed-case-title">
+            <el-tag type="danger" size="small">用例 {{ caseItem.index }}</el-tag>
+            <span class="case-hint">{{ caseItem.error_message || '执行结果与预期不一致' }}</span>
+          </div>
+          <span class="case-label">你的输出：</span>
+          <pre class="sql-detail">{{ caseItem.actual_output || '（空）' }}</pre>
+        </div>
       </div>
       <div class="detail-item" v-if="currentDetail.submission_time || currentDetail.created_at">
         <strong>提交时间：</strong>
@@ -205,6 +226,40 @@ onUnmounted(() => {
   margin: 4px 0 0 0;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* 判题明细：未通过的测试用例 */
+.detail-summary {
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.detail-error {
+  color: #e6a23c;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.failed-case {
+  background-color: #fef0f0;
+  border: 1px solid #fde2e2;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.failed-case-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.case-hint {
+  color: #f56c6c;
+  font-size: 13px;
+}
+.case-label {
+  font-size: 13px;
+  color: #606266;
 }
 
 /* ===== 窄窗口自适应 ===== */

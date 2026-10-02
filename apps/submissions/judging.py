@@ -83,9 +83,18 @@ def _run_judge(submission_id: int) -> None:
         )
         status = result.get('execution_status') or 'ERROR'
         judge_score = int(result.get('score', 0) or 0)
+        # 保存用例明细（判题服务只返回「实际输出」，不含用例输入与预期输出）
+        judge_details = {
+            'cases': result.get('details') or [],
+            'error_message': result.get('error_message') or '',
+        }
     except Exception:  # noqa: BLE001 - 判题失败统一记为 ERROR
         logger.exception("判题失败 submission_id=%s", submission_id)
         status, judge_score = 'ERROR', 0
+        judge_details = {
+            'cases': [],
+            'error_message': '判题服务异常，请稍后重试',
+        }
 
     # 考试提交：得分按该题在考试中的分值换算（ACCEPTED 得满分，否则 0）
     if submission.exam_id:
@@ -101,7 +110,7 @@ def _run_judge(submission_id: int) -> None:
         score = judge_score
 
     Submission.objects.filter(id=submission_id).update(
-        execution_status=status, score=score
+        execution_status=status, score=score, judge_details=judge_details
     )
 
 

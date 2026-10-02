@@ -100,9 +100,52 @@
             <span>得分：</span>
             <span class="score-value">{{ result.score ?? 0 }}</span>
           </div>
-          <div v-if="result.details" class="details">
-            <h4>详细结果</h4>
-            <pre>{{ JSON.stringify(result.details, null, 2) }}</pre>
+          <!-- 判题明细：判题错误时回显「未通过的测试用例」 -->
+          <div v-if="result.judge_details" class="details">
+            <h4>
+              {{ result.execution_status === 'ACCEPTED' ? '✅ 用例通过情况' : '❌ 失败的测试用例' }}
+            </h4>
+
+            <!-- 整体执行失败（如建表语句报错、判题服务异常）时给出原因 -->
+            <el-alert
+              v-if="result.judge_details.error_message"
+              class="detail-alert"
+              type="warning"
+              :closable="false"
+              show-icon
+              :title="result.judge_details.error_message"
+            />
+
+            <p class="detail-summary">
+              共 {{ result.judge_details.total }} 个测试用例，通过
+              {{ result.judge_details.passed_count }} 个。
+            </p>
+
+            <template v-if="failedCases.length > 0">
+              <div
+                v-for="caseItem in failedCases"
+                :key="caseItem.index"
+                class="failed-case"
+              >
+                <div class="failed-case-title">
+                  <el-tag type="danger" size="small">用例 {{ caseItem.index }}</el-tag>
+                  <span v-if="caseItem.error_message" class="case-error">
+                    {{ caseItem.error_message }}
+                  </span>
+                  <span v-else class="case-hint">执行结果与预期不一致</span>
+                </div>
+                <div class="case-output">
+                  <span class="label">你的输出：</span>
+                  <pre>{{ caseItem.actual_output || '（空）' }}</pre>
+                </div>
+              </div>
+              <p class="detail-note">
+                为保护隐藏用例，此处不展示用例的输入与预期输出；可结合题目描述、样例与上表自行排查。
+              </p>
+            </template>
+            <p v-else-if="!result.judge_details.total" class="detail-note">
+              本次提交未记录用例明细（可能是较早的提交）。
+            </p>
           </div>
         </div>
       </el-card>
@@ -286,6 +329,12 @@ const statusText = (status: string) => {
   if (!status || status === 'PENDING') return '判题中…'
   return status
 }
+
+// 判题明细中「未通过」的用例（后端仅返回序号 + 实际输出 + 错误信息）
+const failedCases = computed(() => {
+  const details = result.value?.judge_details
+  return Array.isArray(details?.failed_cases) ? details.failed_cases : []
+})
 
 onMounted(() => {
   loadQuestion()
@@ -478,13 +527,63 @@ onMounted(() => {
   font-weight: 700;
   color: #409eff;
 }
-.details pre {
-  background-color: #f7fafc;
-  padding: 12px;
-  border-radius: 8px;
-  overflow-x: auto;
+.details h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2d3748;
+}
+.detail-alert {
+  margin-bottom: 10px;
+}
+.detail-summary {
+  margin: 0 0 10px;
+  color: #606266;
   font-size: 13px;
+}
+/* 未通过的用例：标题 + 实际输出 */
+.failed-case {
+  background-color: #fef0f0;
+  border: 1px solid #fde2e2;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.failed-case-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.case-error {
+  color: #f56c6c;
+  font-size: 13px;
+}
+.case-hint {
+  color: #909399;
+  font-size: 13px;
+}
+.case-output .label {
+  font-size: 13px;
+  color: #606266;
+}
+.case-output pre {
+  background-color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
   border: 1px solid #e2e8f0;
+  margin: 4px 0 0;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+.detail-note {
+  margin: 4px 0 0;
+  color: #909399;
+  font-size: 12px;
 }
 
 /* ===== 窄窗口自适应 ===== */
