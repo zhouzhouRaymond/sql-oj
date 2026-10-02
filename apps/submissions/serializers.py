@@ -9,7 +9,9 @@ class SubmissionSerializer(serializers.ModelSerializer):
     student_username = serializers.CharField(source='student.username', read_only=True)
     question_title = serializers.CharField(source='question.title', read_only=True)
     question_desc = serializers.CharField(source='question.description', read_only=True)
-    # 判题用例明细：只回显「未通过的用例」（序号 + 实际输出 + 错误信息）。
+    # 考试名称：列表 / 详情都直接给出可读标题，前端不必再按 id 反查；
+    # 练习提交（不属于任何考试）为 None，前端据此回退显示「练习」。
+    exam_title = serializers.CharField(source='exam.title', read_only=True, allow_null=True)
     # 刻意不返回用例输入与预期输出，避免泄露隐藏用例答案。
     judge_details = serializers.SerializerMethodField()
 
@@ -78,13 +80,15 @@ class SubmissionListSerializer(serializers.ModelSerializer):
     student_username = serializers.CharField(source='student.username', read_only=True)
     question_title = serializers.CharField(source='question.title', read_only=True)
     question_desc = serializers.CharField(source='question.description', read_only=True)
+    # 考试名称（练习提交为 None），供前端「来源」列直接显示标题
+    exam_title = serializers.CharField(source='exam.title', read_only=True, allow_null=True)
 
     class Meta:
         model = Submission
         fields = (
             'id', 'student', 'student_name', 'student_username',
             'question', 'question_title', 'question_desc',
-            'exam', 'execution_status', 'score', 'submission_time',
+            'exam', 'exam_title', 'execution_status', 'score', 'submission_time',
         )
         read_only_fields = (
             'student', 'submission_time', 'execution_status', 'score'

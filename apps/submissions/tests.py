@@ -98,3 +98,24 @@ class ExamSubmissionFilterTests(APITestCase):
         self.assertEqual(row['student_name'], self.student.name)
         self.assertEqual(row['student_username'], self.student.username)
 
+    def test_list_exposes_exam_title(self):
+        """列表要给出考试名称，前端「来源」列才能显示标题而不是光秃秃的考试 id。"""
+        self._submit(self.exam)
+        self.client.force_authenticate(self.teacher)
+        resp = self.client.get('/api/submissions/', {'exam': self.exam.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['results'][0]['exam_title'], self.exam.title)
+
+    def test_exam_title_is_none_for_practice_submissions(self):
+        """练习提交不属于任何考试：exam 与 exam_title 都应为 None（前端据此显示「练习」）。"""
+        Submission.objects.create(
+            student=self.student, question=self.question, exam=None,
+            submitted_sql='SELECT 1', score=10, execution_status='ACCEPTED',
+        )
+        self.client.force_authenticate(self.student)
+        resp = self.client.get('/api/submissions/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        row = resp.data['results'][0]
+        self.assertIsNone(row['exam'])
+        self.assertIsNone(row['exam_title'])
+
