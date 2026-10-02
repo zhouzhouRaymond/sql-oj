@@ -1,8 +1,15 @@
 <template>
   <div class="exam-result-container">
     <div class="header">
-      <h1>📊 考试结果</h1>
-      <el-button @click="goToSubmissions">查看提交记录 →</el-button>
+      <div class="header-title">
+        <h1>📊 考试结果</h1>
+        <!-- 交卷结束进入：唯一出口是退出登录；从「考试记录」进入：可返回考试记录 -->
+        <p class="subtitle">{{ headerHint }}</p>
+      </div>
+      <el-button v-if="enteredFromRecords" type="primary" plain @click="goBackToRecords">
+        ← 返回考试记录
+      </el-button>
+      <el-button v-else type="danger" @click="handleLogout">退出登录</el-button>
     </div>
 
     <div v-loading="loading" class="content">
@@ -80,14 +87,16 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExamResult } from '../../api/exams'
 import request from '../../api/request'
 import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
+import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const examId = computed(() => Number(route.params.id))
 
 const loading = ref(false)
@@ -210,10 +219,46 @@ const loadResult = async () => {
   }
 }
 
-// 跳转「我的提交」，带上来源路径，便于在该页「返回」时回到本页
-const goToSubmissions = () => {
-  router.push({ path: '/submissions', query: { from: route.fullPath } })
+// ===== 跳转策略：按「进入本页的入口」决定出口 =====
+// - 交卷 / 倒计时自动交卷进入（?from=exam，缺省同样是该模式）：本场考试已结束，
+//   本页不提供任何其它页面入口，唯一出口是「退出登录」；
+//   任何离开本页的导航（含浏览器「后退」回到考试页）都会被拦截为退出登录。
+// - 从「考试记录」点击「查看结果」进入（?from=records）：只是回顾历史成绩，
+//   属于正常浏览，允许返回考试记录，不登出。
+const enteredFromRecords = computed(() => route.query.from === 'records')
+
+const headerHint = computed(() =>
+  enteredFromRecords.value
+    ? '从「考试记录」查看历史成绩，可返回考试记录'
+    : '离开本页会退出登录，返回登录界面',
+)
+
+// 考试结束模式：退出登录 → 登录界面
+const handleLogout = () => {
+  ElMessageBox.confirm('退出登录后将返回登录界面，确定继续吗？', '退出登录', {
+    confirmButtonText: '确定退出',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(() => {
+    userStore.logout()
+    router.push('/login')
+    ElMessage.success('已退出登录')
+  }).catch(() => {})
 }
+
+// 考试记录模式：返回「考试记录」标签页（不登出）
+const goBackToRecords = () => {
+  router.push({ path: '/exams', query: { tab: 'history' } })
+}
+
+// 兜底拦截：考试结束模式下，任何离开本页的导航都改为退出登录并跳转登录界面；
+// 「考试记录」入口与教师不受此限制（教师访问本页不应被误踢会话）。
+onBeforeRouteLeave((to) => {
+  if (to.path === '/login' || userStore.isTeacher || enteredFromRecords.value) return true
+  userStore.logout()
+  ElMessage.warning('本场考试已结束，已退出登录')
+  return { path: '/login' }
+})
 
 // 点击「查看详情」：先展示基础信息，再按 id 拉取 SQL 与判题明细
 const viewSubmission = async (submissionId: number) => {
@@ -256,6 +301,12 @@ onMounted(() => {
   margin: 0;
   font-size: 20px;
   color: #2d3748;
+}
+/* 页面副标题：说明本页只提供「退出登录」一个出口 */
+.header-title .subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #909399;
 }
 .content {
   max-width: 800px;

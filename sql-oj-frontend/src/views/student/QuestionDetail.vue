@@ -85,6 +85,7 @@
             <template #header>
               <span>✏️ 编写你的 SQL</span>
             </template>
+            <div class="editor-hint">💾 作答内容会自动暂存，刷新页面不会丢失</div>
             <SqlEditor
               v-model="sqlCode"
               :min-height="240"
@@ -259,7 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
@@ -267,9 +268,12 @@ import { getQuestionDetail } from '../../api/questions'
 import { getSubmission, submitSQL } from '../../api/submissions'
 import SqlEditor from '../../components/SqlEditor.vue'
 import { parseResultSet } from '../../utils/resultSet'
+import { useUserStore } from '../../stores/user'
+import { buildDraftKey, loadDraft, saveDraft } from '../../utils/draft'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const questionId = computed(() => Number(route.params.id))
 
 const loading = ref(false)
@@ -277,6 +281,30 @@ const submitting = ref(false)
 const question = ref<any>({})
 const sqlCode = ref('')
 const result = ref<any>(null)
+
+// ===== 作答草稿：刷新 / 误关页面后仍保留已编辑的 SQL =====
+// 草稿按「登录名 + 题目 id」隔离，换账号或换题目都不会串味。
+const draftKey = computed(
+  () => buildDraftKey('question', userStore.user?.username, questionId.value),
+)
+let draftTimer: any = null
+
+const persistDraft = () => saveDraft(draftKey.value, sqlCode.value)
+
+const restoreDraft = (): boolean => {
+  const saved = loadDraft<string>(draftKey.value)
+  if (typeof saved === 'string' && saved.trim()) {
+    sqlCode.value = saved
+    return true
+  }
+  return false
+}
+
+// 编辑内容变化后防抖落盘，避免每次按键都写 localStorage
+watch(sqlCode, () => {
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(persistDraft, 300)
+})
 
 // ✅ 配置 marked 渲染选项
 marked.setOptions({
@@ -559,7 +587,12 @@ const resetRatio = () => {
   saveLayout()
 }
 
-onMounted(() => {  loadQuestion()
+onMounted(() => {
+  // 先恢复上次编辑的内容，再加载题目
+  if (restoreDraft()) {
+    ElMessage.info('已恢复上次未提交的作答内容')
+  }
+  loadQuestion()
   loadLayout()
 })
 
@@ -568,6 +601,8 @@ onUnmounted(() => {
   window.removeEventListener('pointermove', onResizeMove)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
+  if (draftTimer) clearTimeout(draftTimer)
+  persistDraft()  // 离开页面前落盘，避免防抖未触发导致丢失
 })
 
 </script>
@@ -782,6 +817,13 @@ onUnmounted(() => {
 /* SQL 编辑器 */
 .sql-editor {
   margin-bottom: 20px;
+}
+
+/* 草稿暂存提示 */
+.editor-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #909399;
 }
 .actions {
   margin-top: 16px;
