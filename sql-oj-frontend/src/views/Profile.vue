@@ -517,7 +517,7 @@ onUnmounted(() => {
   color: #e2e8f0;
   border-radius: 8px;
   font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;

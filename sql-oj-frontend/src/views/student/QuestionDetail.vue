@@ -727,7 +727,7 @@ onUnmounted(() => {
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
 }
 .markdown-body :deep(pre) {
   background-color: #1e293b;
@@ -736,7 +736,7 @@ onUnmounted(() => {
   border-radius: 8px;
   overflow-x: auto;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
 }
 .markdown-body :deep(pre code) {
   background: none;
@@ -865,7 +865,7 @@ onUnmounted(() => {
   border: 1px solid #e2e8f0;
   margin: 4px 0 0;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
   white-space: pre-wrap;
   word-break: break-all;
   overflow-x: auto;

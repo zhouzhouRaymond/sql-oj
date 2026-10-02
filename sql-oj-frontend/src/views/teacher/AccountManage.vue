@@ -489,7 +489,7 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .account-manage :deep(.el-table .cell) {
-  font-size: 13px;
+  font-size: 14px;
 }
 /* 触底加载提示（与题目列表一致） */
 .load-more {

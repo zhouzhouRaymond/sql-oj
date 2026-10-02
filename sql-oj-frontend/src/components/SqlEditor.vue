@@ -288,7 +288,8 @@ const onKeydown = (event: KeyboardEvent) => {
   border: 0;
   box-sizing: border-box;
   font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
-  font-size: 13px;
+  /* 代码区字号：略微调大，长时间阅读与书写更舒适 */
+  font-size: 15px;
   line-height: 1.6;
   letter-spacing: normal;
   tab-size: 2;

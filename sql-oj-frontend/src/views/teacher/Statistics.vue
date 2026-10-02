@@ -236,6 +236,6 @@ onMounted(() => {
 }
 
 :deep(.el-table .cell) {
-  font-size: 13px;
+  font-size: 14px;
 }
 </style>

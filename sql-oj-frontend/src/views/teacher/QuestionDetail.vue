@@ -714,7 +714,7 @@ onUnmounted(() => {
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
 }
 .markdown-body :deep(pre) {
   background-color: #1e293b;
@@ -723,7 +723,7 @@ onUnmounted(() => {
   border-radius: 8px;
   overflow-x: auto;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
 }
 .markdown-body :deep(pre code) {
   background: none;
@@ -755,7 +755,7 @@ onUnmounted(() => {
   padding: 12px 16px;
   border-radius: 8px;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
   border: none;
   margin: 0;
   white-space: pre-wrap;
@@ -856,7 +856,7 @@ onUnmounted(() => {
   border: 1px solid #e2e8f0;
   margin: 4px 0 0;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -937,7 +937,7 @@ onUnmounted(() => {
   color: #2d3748;
 }
 .ranking-block :deep(.el-table .cell) {
-  font-size: 13px;
+  font-size: 14px;
 }
 .ranking-empty {
   padding: 12px;

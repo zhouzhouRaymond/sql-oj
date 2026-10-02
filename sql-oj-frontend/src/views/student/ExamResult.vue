@@ -305,7 +305,7 @@ onMounted(() => {
   border: 1px solid #e4e7ed;
   margin: 4px 0 0;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 14px;
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 200px;
