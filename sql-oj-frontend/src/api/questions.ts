@@ -37,6 +37,11 @@ export const updateQuestion = (id: number, data: any) => {
   return request.put(`/questions/${id}/`, data)
 }
 
+// 局部更新题目（例如切换「学生可见」开关，只提交变化的字段）
+export const patchQuestion = (id: number, data: any) => {
+  return request.patch(`/questions/${id}/`, data)
+}
+
 // 删除题目
 export const deleteQuestion = (id: number) => {
   return request.delete(`/questions/${id}/`)

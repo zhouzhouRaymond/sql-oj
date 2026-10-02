@@ -13,7 +13,9 @@
       <!-- ✅ 显示题目名称，如果没有则截取描述（与学生端题库一致） -->
       <el-table-column prop="title" label="题目名称" min-width="200">
         <template #default="{ row }">
-          <span>{{ row.title || truncateDescription(row.description) }}</span>
+          <span :class="{ 'title-hidden': row.is_visible === false }">
+            {{ row.title || truncateDescription(row.description) }}
+          </span>
         </template>
       </el-table-column>
       <el-table-column prop="difficulty" label="难度" width="100">
@@ -21,6 +23,21 @@
           <el-tag :type="difficultyTagType(row.difficulty)">
             {{ difficultyText(row.difficulty) }}
           </el-tag>
+        </template>
+      </el-table-column>
+      <!-- 教师可控制该题是否对学生公开：关闭后学生题库里看不到、也打不开 -->
+      <el-table-column label="学生可见" width="130">
+        <template #default="{ row }">
+          <el-switch
+            v-model="row.is_visible"
+            :loading="savingVisible.includes(row.id)"
+            :disabled="savingVisible.includes(row.id)"
+            :width="56"
+            inline-prompt
+            active-text="公开"
+            inactive-text="隐藏"
+            @change="toggleVisible(row)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
@@ -59,7 +76,7 @@ import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '../../stores/user'
-import { getQuestions, deleteQuestion } from '../../api/questions'
+import { getQuestions, deleteQuestion, patchQuestion } from '../../api/questions'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -71,6 +88,9 @@ const finished = ref(false)     // 是否已加载完全部题目
 const loadError = ref(false)    // 上一次加载是否失败
 const currentPage = ref(1)
 const total = ref(0)            // 题目总数（以后端 count 为准）
+
+// 正在切换「学生可见」的题目 id（同一行保存期间禁用开关，避免重复提交）
+const savingVisible = ref<number[]>([])
 
 // 触底加载：滚动监听节流用
 let scrollRafId = 0
@@ -98,6 +118,21 @@ const difficultyText = (difficulty: string) => {
     case 'medium': return '中等'
     case 'hard': return '困难'
     default: return difficulty
+  }
+}
+
+// 切换「学生可见」：v-model 已先更新开关状态，这里落库；失败则回滚开关
+const toggleVisible = async (row: any) => {
+  const next = Boolean(row.is_visible)
+  savingVisible.value = [...savingVisible.value, row.id]
+  try {
+    await patchQuestion(row.id, { is_visible: next })
+    ElMessage.success(next ? '已公开给学生 ✅' : '已对学生隐藏 🙈')
+  } catch (error) {
+    row.is_visible = !next
+    ElMessage.error('操作失败，请重试')
+  } finally {
+    savingVisible.value = savingVisible.value.filter((id) => id !== row.id)
   }
 }
 
@@ -302,6 +337,11 @@ onUnmounted(() => {
   color: #c0c4cc;
   padding: 40px 0;
   font-size: 14px;
+}
+
+/* 已对学生隐藏的题目：标题弱化显示 */
+.title-hidden {
+  color: #a8abb2;
 }
 
 /* ===== 窄窗口自适应 ===== */

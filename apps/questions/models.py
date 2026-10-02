@@ -19,6 +19,9 @@ class Question(models.Model):
     show_case_details = models.BooleanField(
         '失败时向学生展示用例输入与预期输出', default=False
     )
+    # 是否在学生题库中公开展示。关闭后学生看不到、也无法打开该题；
+    # 已安排在考试中的题目不受影响（考试内容由考试接口单独下发）。
+    is_visible = models.BooleanField('对学生可见', default=True)
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

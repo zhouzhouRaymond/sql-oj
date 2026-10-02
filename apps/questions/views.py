@@ -22,6 +22,17 @@ class QuestionViewSet(viewsets.ModelViewSet):
             return QuestionStudentSerializer
         return QuestionSerializer
 
+    def get_queryset(self):
+        """学生只能看到「对学生可见」的题目；教师可见全部（含已隐藏）。
+
+        考试中的题目由考试接口（/exams/{id}/start/）单独下发，
+        因此隐藏题目不会影响已安排的考试。
+        """
+        qs = super().get_queryset()
+        if getattr(self.request.user, 'user_type', None) == 'student':
+            qs = qs.filter(is_visible=True)
+        return qs
+
     def get_permissions(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
             return [permissions.IsAuthenticated(), IsTeacher()]
