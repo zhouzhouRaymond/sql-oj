@@ -32,7 +32,7 @@
         <span class="total-hint">共 {{ total }} 个账号</span>
       </div>
 
-      <el-table :data="users" v-loading="loading" stripe>
+      <el-table :data="users" v-loading="loading" stripe :row-class-name="rowClassName">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="username" label="登录名" min-width="130" />
         <el-table-column label="用户名" min-width="130">
@@ -261,6 +261,65 @@ const onScroll = () => {
   })
 }
 
+// 取全账号列表：新建的账号按 id 排在最后，要"定位到新账号"就必须把列表取全
+const loadAllUsers = async () => {
+  loading.value = true
+  loadError.value = false
+  currentPage.value = 1
+  const all: any[] = []
+  try {
+    let page = 1
+    while (page <= 100) {
+      const res = await getUsers({
+        page,
+        search: keyword.value.trim() || undefined,
+        user_type: roleFilter.value || undefined
+      })
+      const data = res.data || {}
+      // 兼容后端未开启分页（直接返回数组）的情况
+      if (Array.isArray(data)) {
+        all.push(...data)
+        total.value = all.length
+        break
+      }
+      const list = data.results || []
+      all.push(...list)
+      total.value = data.count ?? all.length
+      if (!data.next || list.length === 0) break
+      page += 1
+    }
+    users.value = all
+    finished.value = true
+  } catch (error: any) {
+    loadError.value = true
+    ElMessage.error(error.response?.data?.detail || '加载账号列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 新建后需要高亮的账号 id
+const highlightId = ref<number | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+const rowClassName = ({ row }: any) => (row.id === highlightId.value ? 'row-flash' : '')
+
+// 滚动到指定账号并短暂高亮，便于「定位到新账号」
+const locateAccount = async (id?: number) => {
+  if (!id) return
+  highlightId.value = id
+  await nextTick()
+  const row = document.querySelector<HTMLElement>('.account-manage .el-table__row.row-flash')
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    highlightId.value = null
+    highlightTimer = null
+  }, 2600)
+}
+
 const openCreate = () => {
   editingId.value = null
   form.value = {
@@ -319,10 +378,23 @@ const submitForm = async () => {
     if (editingId.value) {
       const payload: any = { display_name, email: email.trim(), user_type }
       if (password) payload.password = password
-      await updateUserById(editingId.value, payload)
+      const res = await updateUserById(editingId.value, payload)
+      const index = users.value.findIndex((item) => item.id === editingId.value)
+      if (index >= 0) {
+        // 就地更新，避免整表重载导致滚动位置跳动
+        users.value[index] = { ...users.value[index], ...(res.data || {}) }
+        // 改后不再符合当前角色筛选时，从列表移除并提示
+        if (roleFilter.value && res.data?.user_type !== roleFilter.value) {
+          users.value.splice(index, 1)
+          total.value = Math.max(0, total.value - 1)
+          ElMessage.info('该账号已不符合当前角色筛选，已从列表移除')
+        }
+      } else {
+        await loadUsers(true)
+      }
       ElMessage.success('账号已更新 ✅')
     } else {
-      await createUser({
+      const created = await createUser({
         username,
         display_name,
         email: email.trim(),
@@ -330,9 +402,15 @@ const submitForm = async () => {
         password
       })
       ElMessage.success('账号创建成功 ✅')
+      dialogVisible.value = false
+      // 新账号按 id 排在列表最末：清空筛选 → 取全列表 → 滚动定位并高亮
+      keyword.value = ''
+      roleFilter.value = ''
+      await loadAllUsers()
+      await locateAccount(created.data?.id)
+      return
     }
     dialogVisible.value = false
-    await loadUsers(true)
   } catch (error: any) {
     ElMessage.error(firstErrorMessage(error.response?.data, '保存失败，请重试'))
   } finally {
@@ -372,6 +450,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', onScroll)
   if (scrollRafId) window.cancelAnimationFrame(scrollRafId)
   scrollRafId = 0
+  if (highlightTimer) clearTimeout(highlightTimer)
 })
 </script>
 
@@ -429,6 +508,11 @@ onUnmounted(() => {
   color: #c0c4cc;
   padding: 40px 0;
   font-size: 14px;
+}
+/* 新建账号后短暂高亮该行，便于「定位到新账号」 */
+.account-manage :deep(.el-table__row.row-flash td) {
+  background-color: #fdf6ec !important;
+  transition: background-color 0.3s;
 }
 
 /* ===== 窄窗口自适应 ===== */
