@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+import { useUserStore } from './stores/user'
 
 const app = createApp(App)  // ← 先创建 app
 const pinia = createPinia()
@@ -17,4 +18,10 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(pinia)
 app.use(router)
 app.use(ElementPlus)
+
+// 应用启动时恢复登录态：若本地存在 token 则先向 /users/me/ 校验会话，
+// 保证刷新页面后仍能正确识别已登录用户（而不是把页面当作未登录却能继续访问）。
+// 会话无效时会在守卫中跳转到登录页。
+useUserStore().restoreSession()
+
 app.mount('#app')

@@ -97,29 +97,61 @@ const router = createRouter({
   ]
 })
 
-// 路由守卫：检查登录 + 角色权限
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('access_token')
-  const userStr = localStorage.getItem('user')
-  const user = userStr ? JSON.parse(userStr) : null
+// 各角色对应的首页
+const homeOf = (role?: string) => (role === 'teacher' ? '/teacher' : '/questions')
 
-  // 需要登录但没 token
-  if (to.meta.requiresAuth && !token) {
-    next('/login')
+// 路由守卫：检查登录 + 角色权限
+// 关键点：不能只判断 localStorage 里有没有 token（任意字符串都能伪造），
+// 必须校验会话有效（token 能换回用户信息）后才允许进入受保护页面，
+// 否则未登录 / 登录已失效时仍会渲染题目页并暴露提交入口。
+router.beforeEach(async (to, from, next) => {
+  const userStore = useUserStore()
+
+  // 登录页：若已登录（token 有效）则直接进入对应首页，避免出现
+  // “看到登录页、以为未登录，却仍能访问题目页并提交”的困惑。
+  if (to.path === '/login') {
+    if (userStore.token) {
+      const ok = userStore.user ? true : await userStore.restoreSession()
+      if (ok) {
+        next(homeOf(userStore.user?.user_type))
+        return
+      }
+    }
+    next()
     return
   }
 
-  // 检查角色权限
-  if (to.meta.allowedRoles && user) {
-    if (!to.meta.allowedRoles.includes(user.user_type)) {
-      // 无权限，根据身份跳转到对应首页
-      if (user.user_type === 'teacher') {
-        next('/teacher')
-      } else {
-        next('/questions')
-      }
+  // 公开页面直接放行
+  if (!to.meta.requiresAuth) {
+    next()
+    return
+  }
+
+  // 无 token：未登录，跳转登录页
+  if (!userStore.token) {
+    next({ path: '/login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  // 有 token 但内存中还没有用户信息（例如刷新页面后）：先校验并恢复会话
+  if (!userStore.user) {
+    const ok = await userStore.restoreSession()
+    if (!ok) {
+      // token 失效 / 伪造，清除后跳转登录页
+      next({ path: '/login', query: { redirect: to.fullPath } })
       return
     }
+  }
+
+  // 检查角色权限（用户信息缺失时同样拒绝，避免绕过角色校验）
+  const allowedRoles = to.meta.allowedRoles as string[] | undefined
+  if (allowedRoles && (!userStore.user || !allowedRoles.includes(userStore.user.user_type))) {
+    if (userStore.user?.user_type === 'teacher') {
+      next('/teacher')
+    } else {
+      next('/questions')
+    }
+    return
   }
 
   next()
