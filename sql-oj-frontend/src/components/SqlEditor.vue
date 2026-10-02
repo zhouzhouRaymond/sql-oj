@@ -40,7 +40,7 @@ import { ElMessage } from 'element-plus'
 /**
  * SQL 代码编辑器（零依赖实现）
  * - 实时语法高亮：关键字 / 函数 / 字符串 / 数字 / 注释 / 运算符
- * - 一键格式化：统一关键字大小写与子句换行缩进（格式化前先屏蔽字符串与注释）
+ * - 一键格式化：Google 风格（关键字大写、子句独占一行、列表每项一行、条件缩进）
  * - v-model 双向绑定，支持禁用态与外部赋值（切换题目 / 重置）
  */
 const props = withDefaults(
@@ -151,19 +151,41 @@ const maskLiterals = (sql: string): { masked: string; literals: string[] } => {
 const restoreLiterals = (sql: string, literals: string[]): string =>
   sql.replace(new RegExp(`${MASK}(\\d+)${MASK}`, 'g'), (_match, index: string) => literals[Number(index)] ?? '')
 
-/** 需要独占一行的主要子句 */
-const CLAUSE_PATTERN = new RegExp(
-  '\\b(' +
-    [
-      'SELECT', 'FROM', 'WHERE', 'GROUP\\s+BY', 'ORDER\\s+BY', 'HAVING', 'LIMIT', 'OFFSET',
-      'UNION\\s+ALL', 'UNION', 'INSERT\\s+INTO', 'VALUES', 'UPDATE', 'DELETE\\s+FROM', 'RETURNING',
-      'INNER\\s+JOIN', 'LEFT\\s+JOIN', 'RIGHT\\s+JOIN', 'FULL\\s+JOIN', 'CROSS\\s+JOIN', 'JOIN',
-    ].join('|') +
-    ')\\b',
-  'g',
+/**
+ * Google 风格格式化：
+ * - 关键字大写、缩进固定 2 空格、每个子句独占一行；
+ * - 列表子句（SELECT / GROUP BY / ORDER BY / SET / RETURNING）每项一行，逗号置于行尾；
+ * - 条件子句（WHERE / HAVING / ON）的 AND / OR 换行并缩进；
+ * - 括号内的子查询整体再缩进一层。
+ */
+
+/** 需要另起一行的子句；多词子句必须排在单词子句之前（正则按顺序匹配） */
+const FORMAT_CLAUSES = [
+  'LEFT OUTER JOIN', 'RIGHT OUTER JOIN', 'FULL OUTER JOIN', 'UNION ALL',
+  'GROUP BY', 'ORDER BY', 'INSERT INTO', 'DELETE FROM',
+  'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'INNER JOIN', 'CROSS JOIN',
+  'SELECT', 'FROM', 'WHERE', 'HAVING', 'LIMIT', 'OFFSET', 'VALUES',
+  'UPDATE', 'SET', 'WITH', 'RETURNING', 'UNION', 'EXCEPT', 'INTERSECT',
+  'JOIN', 'ON',
+]
+
+const CLAUSE_RE = new RegExp(
+  `^(?:${FORMAT_CLAUSES.map((clause) => clause.replace(/ /g, '\\s+')).join('|')})\\b`,
+  'i',
 )
 
-const CONTINUATION_RE = /^(AND|OR|ON|UNION)\b/
+/** 列表子句：其后的每一项独占一行（逗号在行尾） */
+const LIST_CLAUSES = new Set(['SELECT', 'GROUP BY', 'ORDER BY', 'SET', 'RETURNING'])
+/** 条件子句：AND / OR 换行并缩进 */
+const COND_CLAUSES = new Set(['WHERE', 'HAVING', 'ON'])
+/** 视为子查询的括号内容起始关键字 */
+const SUBQUERY_START_RE = /^(?:SELECT|WITH)\b/i
+
+interface SubqueryFrame {
+  level: number
+  mode: 'list' | 'cond' | 'simple'
+  condIndent: number
+}
 
 const formatSql = (raw: string): string => {
   const source = raw.trim()
@@ -171,19 +193,148 @@ const formatSql = (raw: string): string => {
 
   const { masked, literals } = maskLiterals(source)
 
-  // 1) 压缩空白  2) 关键字大写  3) 主要子句换行  4) 连接条件缩进
-  let text = masked.replace(/\s+/g, ' ')
+  // 折叠空白（随后由本函数统一重排），并把关键字统一为大写
+  let text = masked.replace(/\s+/g, ' ').trim()
   text = text.replace(/[A-Za-z_][A-Za-z0-9_]*/g, (word) =>
     SQL_KEYWORDS.has(word.toUpperCase()) ? word.toUpperCase() : word,
   )
-  text = text.replace(CLAUSE_PATTERN, (clause) => `\n${clause.toUpperCase()}`)
 
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line, index) => (index > 0 && CONTINUATION_RE.test(line) ? `  ${line}` : line))
+  const lines: string[] = []
+  let line = ''
+  let curIndent = 0 // 当前行的缩进层数
+  let level = 0 // 当前查询层级（= 该层子句所在的括号深度）
+  let depth = 0 // 当前括号深度
+  let mode: 'list' | 'cond' | 'simple' = 'simple'
+  let condIndent = 1 // 条件续行的缩进层数
+  let betweenPending = false
+  let caseDepth = 0
+  const subqueryStack: SubqueryFrame[] = []
 
+  const flush = () => {
+    const content = line.trim().replace(/\(\s+/g, '(').replace(/\s+([,;)])/g, '$1')
+    if (content) lines.push('  '.repeat(Math.max(0, curIndent)) + content)
+    line = ''
+  }
+
+  const isWordChar = (ch: string | undefined): boolean =>
+    !!ch && /[A-Za-z0-9_]/.test(ch)
+
+  let i = 0
+  while (i < text.length) {
+    const ch = text.charAt(i)
+
+    // 括号：子查询整体缩进一层；普通括号视为整体（内部不再拆行）
+    if (ch === '(') {
+      if (SUBQUERY_START_RE.test(text.slice(i + 1).trimStart())) {
+        line += '('
+        flush()
+        subqueryStack.push({ level, mode, condIndent })
+        depth += 1
+        level = depth
+        curIndent = level
+        mode = 'simple'
+      } else {
+        line += '('
+        depth += 1
+      }
+      i += 1
+      continue
+    }
+
+    if (ch === ')') {
+      if (subqueryStack.length > 0 && depth === level) {
+        flush()
+        const frame = subqueryStack.pop() as SubqueryFrame
+        level = frame.level
+        mode = frame.mode
+        condIndent = frame.condIndent
+        depth -= 1
+        line = ')'
+        curIndent = level
+      } else {
+        line += ')'
+        depth -= 1
+      }
+      i += 1
+      continue
+    }
+
+    const atTokenStart = !isWordChar(i > 0 ? text.charAt(i - 1) : '')
+
+    // 子句关键字独占一行
+    if (depth === level && atTokenStart) {
+      const match = CLAUSE_RE.exec(text.slice(i))
+      const matched = match?.[0] ?? ''
+      if (matched) {
+        const phrase = matched.toUpperCase().replace(/\s+/g, ' ')
+        flush()
+        curIndent = phrase === 'ON' ? level + 1 : level
+        line = phrase
+        let consumed = matched.length
+
+        // SELECT DISTINCT / ALL 与 SELECT 同行
+        if (phrase === 'SELECT') {
+          const distinct = /^\s+(DISTINCT|ALL)\b/i.exec(text.slice(i + consumed))
+          const dist = distinct?.[1]
+          if (dist) {
+            line += ` ${dist.toUpperCase()}`
+            consumed += (distinct?.[0] ?? '').length
+          }
+        }
+
+        if (LIST_CLAUSES.has(phrase)) {
+          flush() // 列表子句的关键字独占一行，其后每项一行
+          curIndent = level + 1
+          mode = 'list'
+        } else if (COND_CLAUSES.has(phrase)) {
+          mode = 'cond'
+          condIndent = curIndent + 1
+          betweenPending = false
+          caseDepth = 0
+        } else {
+          mode = 'simple'
+        }
+
+        i += consumed
+        continue
+      }
+    }
+
+    // 列表子句：顶层逗号换行，逗号保留在行尾
+    if (ch === ',' && depth === level && mode === 'list') {
+      line = `${line.trimEnd()},`
+      flush()
+      curIndent = level + 1
+      i += 1
+      continue
+    }
+
+    // 条件子句：顶层 AND / OR 换行缩进（BETWEEN..AND..、CASE..END 内部不拆）
+    if (mode === 'cond' && depth === level && atTokenStart) {
+      const kw = /^(AND|OR|BETWEEN|CASE|END)\b/i.exec(text.slice(i))
+      const word = (kw?.[1] ?? '').toUpperCase()
+      if (word) {
+        if ((word === 'AND' || word === 'OR') && !betweenPending && caseDepth === 0) {
+          flush()
+          curIndent = condIndent
+          line = word
+        } else {
+          line += word
+          if (word === 'BETWEEN') betweenPending = true
+          if (word === 'AND') betweenPending = false
+        }
+        if (word === 'CASE') caseDepth += 1
+        if (word === 'END' && caseDepth > 0) caseDepth -= 1
+        i += (kw?.[0] ?? '').length
+        continue
+      }
+    }
+
+    line += ch
+    i += 1
+  }
+
+  flush()
   return restoreLiterals(lines.join('\n'), literals)
 }
 
@@ -292,10 +443,23 @@ const onKeydown = (event: KeyboardEvent) => {
   font-size: 15px;
   line-height: 1.6;
   letter-spacing: normal;
+  word-spacing: 0;
+  /* 关闭连字：JetBrains Mono 等编码字体会把 <=、!=、-> 连成一个字形，
+     两层若对连字的处理不一致，字宽就不同，光标会逐字漂移 */
+  font-variant-ligatures: none;
   tab-size: 2;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: break-word;
+  /* 两层始终预留同宽的滚动条槽：textarea 出现纵向滚动条时可用宽度不再变窄，
+     自动换行位置才不会与高亮层错位（overflow:hidden 层同样预留） */
+  scrollbar-gutter: stable;
+}
+
+/* 浏览器 UA 样式会给 <code> 强制 font-family: monospace，覆盖掉从 <pre> 继承的字体。
+   必须显式继承，否则高亮层与输入层字体不一致，输入光标会逐字漂移。 */
+.sql-editor__highlight code {
+  font: inherit;
 }
 
 .sql-editor__highlight {
@@ -310,6 +474,7 @@ const onKeydown = (event: KeyboardEvent) => {
   position: relative;
   display: block;
   width: 100%;
+  overflow: auto;
   background: transparent;
   color: transparent;
   caret-color: #1f2937;
