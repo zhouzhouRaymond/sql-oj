@@ -399,6 +399,7 @@ import { getAllExams, createExam as createExamApi, deleteExam, getExamResult, up
 import { getAllQuestions } from '../../api/questions'
 import { getExamSubmissions, getSubmission } from '../../api/submissions'
 import { formatDateTime } from '../../utils/time'
+import { statusTagType } from '../../utils/status'
 import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 
 // ===== 防死循环锁 =====
@@ -406,7 +407,6 @@ let isLoadingExams = false
 
 const loading = ref(false)
 const creating = ref(false)
-const loadingStudents = ref(false)
 const dialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const editingExamId = ref<number | null>(null)
@@ -446,10 +446,7 @@ const availableQuestions = computed(() => {
 
 // ===== loadExams 加锁 =====
 const loadExams = async () => {
-  if (isLoadingExams) {
-    console.warn('⏳ 考试列表正在加载中，跳过重复请求')
-    return
-  }
+  if (isLoadingExams) return   // 正在加载中：跳过重复请求
 
   isLoadingExams = true
   loading.value = true
@@ -645,17 +642,6 @@ const examQuestionCount = ref(0)
 const subDetailVisible = ref(false)
 const subDetailLoading = ref(false)
 const currentDetail = ref<any>({})
-
-// 判题状态 → 标签颜色（与「我的提交记录」保持一致）
-const statusTagType = (status: string) => {
-  switch (status) {
-    case 'ACCEPTED': return 'success'
-    case 'WRONG_ANSWER': return 'error'
-    case 'ERROR': return 'error'
-    case 'TIMEOUT': return 'warning'
-    default: return 'info'
-  }
-}
 
 // 学生在本场考试的状态：已提交 / 未提交（已进入考试但没交）
 const studentStatus = (row: any) => {

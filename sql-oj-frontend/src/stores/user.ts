@@ -92,14 +92,6 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  // 从本地恢复用户信息（仅用于界面展示，不做校验）
-  const restoreUser = () => {
-    const storedUser = localStorage.getItem('user')
-    if (storedUser) {
-      user.value = JSON.parse(storedUser)
-    }
-  }
-
   // 应用启动 / 刷新时恢复并校验会话：
   // - 本地没有 token：视为未登录
   // - 本地有 token：调用 /users/me/ 校验，失败（token 失效或伪造）则清空登录态
@@ -143,7 +135,7 @@ export const useUserStore = defineStore('user', () => {
   return {
     user, token, isAuthenticated, sessionChecked,
     isTeacher, isStudent, displayName,
-    login, fetchUser, logout, restoreUser, restoreSession,
+    login, fetchUser, logout, restoreSession,
   }
 
 })

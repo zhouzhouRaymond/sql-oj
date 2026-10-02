@@ -55,18 +55,16 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { startExam, saveExamDraft } from '../../api/exams'
+import { startExam, saveExamDraft, submitExam } from '../../api/exams'
 import { marked } from 'marked'
-import request from '../../api/request'          // 直接导入 axios 实例，确保请求体格式正确
 import SqlEditor from '../../components/SqlEditor.vue'
 import { useUserStore } from '../../stores/user'
 import { buildDraftKey, clearDraft, loadDraft, saveDraft } from '../../utils/draft'
 
-// 配置 marked
+// 配置 marked（gfm 已包含表格支持，无需单列选项）
 marked.setOptions({
   breaks: true,
-  gfm: true,
-  tables: true
+  gfm: true
 })
 
 // 渲染 Markdown
@@ -236,7 +234,7 @@ const doSubmit = async () => {
   }
 
   try {
-    await request.post(`/exams/${examId.value}/submit/`, { answers: answerList })
+    await submitExam(examId.value, answerList)
     finished = true
     clearDraft(draftKey.value)   // 交卷成功后清除本地草稿
     ElMessage.success('提交成功 ✅')

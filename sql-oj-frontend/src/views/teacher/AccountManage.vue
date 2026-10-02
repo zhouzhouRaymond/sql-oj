@@ -206,7 +206,7 @@ const loadUsers = async (reset = false) => {
     } else {
       // 追加时按 id 去重，避免重复请求导致同一账号出现两次
       const seen = new Set(users.value.map((item) => item.id))
-      users.value = [...users.value, ...list.filter((item) => !seen.has(item.id))]
+      users.value = [...users.value, ...list.filter((item: any) => !seen.has(item.id))]
     }
     // 总数以后端返回的 count 为准（列表长度只代表“已加载”的数量）
     total.value = data.count ?? users.value.length

@@ -90,7 +90,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExamResult } from '../../api/exams'
-import request from '../../api/request'
+import { getSubmission, getSubmissions } from '../../api/submissions'
+import { statusTagType } from '../../utils/status'
 import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 import { useUserStore } from '../../stores/user'
 
@@ -112,16 +113,7 @@ const detailVisible = ref(false)
 const detailLoading = ref(false)
 const currentDetail = ref<any>({})
 
-const statusTagType = (status: string) => {
-  switch (status) {
-    case 'ACCEPTED': return 'success'
-    case 'WRONG_ANSWER': return 'danger'
-    case 'ERROR': return 'danger'
-    case 'TIMEOUT': return 'warning'
-    default: return 'info'
-  }
-}
-
+// 判题状态标签颜色统一由 utils/status 提供（见文件顶部 import）
 
 const getCurrentUser = () => {
   const userStr = localStorage.getItem('user')
@@ -155,11 +147,8 @@ const loadResult = async () => {
     })
     const totalScore = myRecord ? (myRecord.total || myRecord.score || 0) : 0
 
-    // 2. 获取提交记录 —— 只获取本次考试的提交
-    // 兼容后端是否支持 exam 参数过滤
-    const subRes = await request.get('/submissions/', {
-      params: { exam: examId.value }
-    })
+    // 2. 获取提交记录 —— 只取本次考试的提交（后端支持按 exam 过滤）
+    const subRes = await getSubmissions({ exam: examId.value })
     let submissions = subRes.data?.results || subRes.data || []
 
     // 手动过滤：确保每条记录的考试ID等于当前考试ID
@@ -267,7 +256,7 @@ const viewSubmission = async (submissionId: number) => {
   detailLoading.value = true
   currentDetail.value = { id: submissionId }
   try {
-    const res = await request.get(`/submissions/${submissionId}/`)
+    const res = await getSubmission(submissionId)
     currentDetail.value = res.data || {}
   } catch (error) {
     ElMessage.error('获取提交详情失败')

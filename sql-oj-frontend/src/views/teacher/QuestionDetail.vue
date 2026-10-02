@@ -54,7 +54,7 @@
               </template>
               <div v-if="question.answers && question.answers.length > 0">
                 <div v-for="(ans, idx) in question.answers" :key="idx" class="answer-item">
-                  <span class="answer-label">答案 {{ idx + 1 }}：</span>
+                  <span class="answer-label">答案 {{ Number(idx) + 1 }}：</span>
                   <pre class="answer-sql">{{ ans.correct_sql }}</pre>
                 </div>
               </div>
@@ -79,7 +79,7 @@
               </template>
               <div v-if="question.test_cases && question.test_cases.length > 0">
                 <div v-for="(tc, idx) in testCaseViews" :key="idx" class="test-case-item">
-                  <span class="test-case-label">用例 {{ idx + 1 }}</span>
+                  <span class="test-case-label">用例 {{ Number(idx) + 1 }}</span>
                   <div class="test-case-row">
                     <div>
                       <span class="label">测试输入：</span>
@@ -292,6 +292,7 @@ import { getQuestionSubmissionStats } from '../../api/stats'
 import { getSubmission, getSubmissions } from '../../api/submissions'
 import { formatDateTime } from '../../utils/time'
 import { parseResultSet } from '../../utils/resultSet'
+import { statusTagType } from '../../utils/status'
 import SubmissionCaseDetail from '../../components/SubmissionCaseDetail.vue'
 
 const route = useRoute()
@@ -313,10 +314,8 @@ const testCaseViews = computed(() =>
 const tableMinWidth = (table: { columns: unknown[] }) =>
   `${Math.max((table?.columns?.length || 0) * 140, 320)}px`
 
-// 🔑 参考答案 / 📥📤 样例 / 🧪 测试用例 默认折叠（空数组=收起），点击标题后才展开显示
+// 🔑 参考答案 / 🧪 测试用例 默认折叠（空数组=收起），点击标题后才展开显示
 const activePanels = ref<string[]>([])
-const sampleInputPanels = ref<string[]>([])
-const sampleOutputPanels = ref<string[]>([])
 const testCasePanels = ref<string[]>([])
 
 // 📊 本题数据统计：时间段筛选 + 动态获取（null = 全部时间）
@@ -396,7 +395,6 @@ const toPercent = (rate: any): number => {
 }
 
 const passRatePercent = computed(() => toPercent(stats.value.pass_rate))
-const studentPassRatePercent = computed(() => toPercent(stats.value.student_pass_rate))
 
 // 🏆 当前时间段内本题的学生通过率排名（与汇总数据同一次请求返回，口径一致）
 const ranking = ref<any[]>([])
@@ -483,14 +481,7 @@ const studentDialogTitle = computed(
   () => `${currentStudent.value.student_name || '学生'} · 本题提交记录（${appliedRangeText.value}）`
 )
 
-const statusTagType = (status: string) => {
-  switch (status) {
-    case 'ACCEPTED': return 'success'
-    case 'WRONG_ANSWER': return 'danger'
-    case 'TIMEOUT': return 'warning'
-    default: return 'info'
-  }
-}
+// 判题状态标签颜色统一由 utils/status 提供（见文件顶部 import）
 
 const openStudentSubmissions = (row: any) => {
   if (!row?.student_id) return
@@ -552,11 +543,10 @@ const resetStudentDialog = () => {
   studentSubPage.value = 1
 }
 
-// ✅ 配置 marked 渲染选项
+// ✅ 配置 marked 渲染选项（gfm 已包含表格支持，无需单列选项）
 marked.setOptions({
   breaks: true,
-  gfm: true,
-  tables: true
+  gfm: true
 })
 
 const renderMarkdown = (text: string) => {

@@ -35,7 +35,7 @@ const router = createRouter({
     {
       path: '/submissions',
       name: 'MySubmissions',
-      component: () => import('../views/student/MySubmissions.vue'),
+      component: () => import('../views/MySubmissions.vue'),
       meta: { requiresAuth: true, allowedRoles: ['student', 'teacher'] }
     },
     // 在学生端路由中添加
@@ -109,7 +109,7 @@ const homeOf = (role?: string) => (role === 'teacher' ? '/teacher' : '/questions
 // 关键点：不能只判断 localStorage 里有没有 token（任意字符串都能伪造），
 // 必须校验会话有效（token 能换回用户信息）后才允许进入受保护页面，
 // 否则未登录 / 登录已失效时仍会渲染题目页并暴露提交入口。
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
 
   // 登录页：若已登录（token 有效）则直接进入对应首页，避免出现

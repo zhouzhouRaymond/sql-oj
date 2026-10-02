@@ -196,8 +196,9 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
-import { updateUser, getUserStats, getMySubmissions, changePassword } from '../api/users'
-import { getSubmission } from '../api/submissions'
+import { updateUser, getUserStats, changePassword } from '../api/users'
+import { getSubmission, getSubmissions } from '../api/submissions'
+import { statusTagType } from '../utils/status'
 import { formatDateTime, formatRelativeTime } from '../utils/time'
 
 const router = useRouter()
@@ -278,8 +279,8 @@ const loadStats = async () => {
       questions_created: data.questions_created || 0,
       exams_created: data.exams_created || 0
     }
-  } catch (error) {
-    console.log('📊 统计数据接口暂不可用（后端未实现）')
+  } catch {
+    // 接口异常时保持默认（全 0）统计，避免页面报错
   }
 }
 
@@ -287,7 +288,7 @@ const loadStats = async () => {
 const loadSubmissions = async () => {
   submissionsLoading.value = true
   try {
-    const res = await getMySubmissions({ page: currentPage.value })
+    const res = await getSubmissions({ page: currentPage.value })
     const data = res.data || {}
     if (Array.isArray(data)) {
       // 兜底：接口未开启分页时（直接返回数组）
@@ -297,8 +298,9 @@ const loadSubmissions = async () => {
       recentSubmissions.value = data.results || []
       total.value = data.count || 0
     }
-  } catch (error) {
-    console.log('📝 提交记录接口暂不可用')
+  } catch {
+    // 接口异常时清空列表并提示，避免展示过期数据
+    ElMessage.error('加载提交记录失败')
     recentSubmissions.value = []
     total.value = 0
   } finally {
@@ -380,14 +382,7 @@ const goBack = () => {
   }
 }
 
-const statusTagType = (status: string) => {
-  switch (status) {
-    case 'ACCEPTED': return 'success'
-    case 'WRONG_ANSWER': return 'danger'
-    case 'TIMEOUT': return 'warning'
-    default: return 'info'
-  }
-}
+// 判题状态标签颜色统一由 utils/status 提供（见文件顶部 import）
 
 onMounted(() => {
   loadStats()

@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { getQuestionStats, getStudentStats, getOverview } from '../../api/stats'
 
 const loading = ref(false)
@@ -130,8 +131,8 @@ const loadQuestionStats = async () => {
       attempted_count: safeNumber(item.attempted_students ?? item.attempted_count),  // 提交人数
       total_submissions: safeNumber(item.total_submissions)
     }))
-  } catch (error) {
-    console.error('加载题目统计失败', error)
+  } catch {
+    ElMessage.error('加载题目统计失败')
   } finally {
     loading.value = false
   }
@@ -152,8 +153,8 @@ const loadStudentStats = async () => {
       passed: safeNumber(item.passed ?? item.passed_count),
       total_submissions: safeNumber(item.total_submissions ?? item.submissions)
     }))
-  } catch (error) {
-    console.error('加载学生排名失败', error)
+  } catch {
+    ElMessage.error('加载学生排名失败')
   } finally {
     rankingLoading.value = false
   }
@@ -171,8 +172,8 @@ const loadOverview = async () => {
       total_users: safeNumber(data.total_users ?? data.user_count),
       average_pass_rate: toPercent(avgRate)
     }
-  } catch (error) {
-    console.error('加载概览数据失败', error)
+  } catch {
+    ElMessage.error('加载概览数据失败')
   }
 }
 

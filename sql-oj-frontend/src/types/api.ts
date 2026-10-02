@@ -6,6 +6,7 @@ export interface User {
   name?: string          // 展示名：display_name 为空时后端回退为登录名
   email: string
   user_type: 'student' | 'teacher'
+  avatar?: string         // 头像地址（Profile 页展示，未设置时用展示名首字母兜底）
 }
 
 // 题目相关类型

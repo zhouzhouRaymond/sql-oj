@@ -268,6 +268,7 @@ import { getQuestionDetail } from '../../api/questions'
 import { getSubmission, submitSQL } from '../../api/submissions'
 import SqlEditor from '../../components/SqlEditor.vue'
 import { parseResultSet } from '../../utils/resultSet'
+import { statusTagType, statusText } from '../../utils/status'
 import { useUserStore } from '../../stores/user'
 import { buildDraftKey, loadDraft, saveDraft } from '../../utils/draft'
 
@@ -306,11 +307,10 @@ watch(sqlCode, () => {
   draftTimer = setTimeout(persistDraft, 300)
 })
 
-// ✅ 配置 marked 渲染选项
+// ✅ 配置 marked 渲染选项（gfm 已包含表格支持，无需单列选项）
 marked.setOptions({
   breaks: true,
-  gfm: true,
-  tables: true
+  gfm: true
 })
 
 // ✅ 渲染 Markdown 内容
@@ -342,11 +342,11 @@ const tablePreview = computed(() => {
   if (!match) return null
 
   const columnsText = match[1]
-  const columnLines = columnsText.split(',').map(s => s.trim())
+  const columnLines = columnsText.split(',').map((s: string) => s.trim())
   const columns: string[] = []
   const rows: Record<string, string>[] = [{}]
 
-  columnLines.forEach(line => {
+  columnLines.forEach((line: string) => {
     const colMatch = line.match(/^\s*`?(\w+)`?\s+/)
     if (colMatch) {
       columns.push(colMatch[1])
@@ -450,21 +450,7 @@ const difficultyText = (difficulty: string) => {
   }
 }
 
-const statusTagType = (status: string) => {
-  switch (status) {
-    case 'ACCEPTED': return 'success'
-    case 'WRONG_ANSWER': return 'danger'
-    case 'ERROR': return 'danger'
-    case 'TIMEOUT': return 'warning'
-    case 'PENDING': return 'info'
-    default: return 'info'
-  }
-}
-
-const statusText = (status: string) => {
-  if (!status || status === 'PENDING') return '判题中…'
-  return status
-}
+// 判题状态标签颜色与文案统一由 utils/status 提供（见文件顶部 import）
 
 // 判题明细中「未通过」的用例（后端仅返回序号 + 实际输出 + 错误信息）
 const failedCases = computed(() => {

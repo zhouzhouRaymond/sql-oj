@@ -1,4 +1,5 @@
 import request from './request'
+import { fetchAllPages } from './paging'
 
 export const submitSQL = (data: {
   question_id: number
@@ -26,18 +27,6 @@ export const getSubmissions = (params?: {
 }
 
 // 某场考试的全部提交（学生端自动限定为本人；教师端为所有学生）。
-// 后端分页每页 20 条，这里自动翻页取全量，供教师端「提交情况」展示。
-export const getExamSubmissions = async (examId: number): Promise<any[]> => {
-  const all: any[] = []
-  const maxPages = 100 // 保险上限，避免分页异常时死循环
-  for (let page = 1; page <= maxPages; page += 1) {
-    const res = await request.get('/submissions/', { params: { exam: examId, page } })
-    const data = res.data || {}
-    // 兼容后端未开启分页（直接返回数组）的情况
-    if (Array.isArray(data)) return [...all, ...data]
-    const list = data.results || []
-    all.push(...list)
-    if (!data.next || list.length === 0) break
-  }
-  return all
-}
+// 后端分页每页 20 条，这里自动翻页取全量，供教师端「考试情况」展示。
+export const getExamSubmissions = (examId: number): Promise<any[]> =>
+  fetchAllPages('/submissions/', { exam: examId })
