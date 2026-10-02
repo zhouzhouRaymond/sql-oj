@@ -60,12 +60,10 @@
         <template #header>
           <span>✏️ 编写你的 SQL</span>
         </template>
-        <el-input
+        <SqlEditor
           v-model="sqlCode"
-          type="textarea"
-          :rows="10"
+          :min-height="240"
           placeholder="请输入你的 SQL 语句..."
-          class="sql-textarea"
         />
         <div class="actions">
           <el-button type="primary" @click="handleSubmit" :loading="submitting">
@@ -108,6 +106,7 @@ import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 import { getQuestionDetail } from '../../api/questions'
 import { getSubmission, submitSQL } from '../../api/submissions'
+import SqlEditor from '../../components/SqlEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -423,11 +422,6 @@ onMounted(() => {
 /* SQL 编辑器 */
 .sql-editor {
   margin-bottom: 20px;
-}
-.sql-textarea :deep(textarea) {
-  font-family: 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.6;
 }
 .actions {
   margin-top: 16px;

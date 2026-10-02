@@ -33,7 +33,7 @@
 
       <!-- 建表语句 -->
       <el-form-item label="建表语句">
-        <el-input v-model="form.create_table_sql" type="textarea" :rows="5" placeholder="CREATE TABLE ..." />
+        <SqlEditor v-model="form.create_table_sql" :min-height="150" placeholder="CREATE TABLE ..." />
         <div class="input-hint">建表语句中可以包含 INSERT 数据，用于初始化测试环境</div>
       </el-form-item>
 
@@ -69,10 +69,9 @@
               </el-button>
             </div>
             <div class="test-case-row">
-              <el-input
+              <SqlEditor
                 v-model="testCase.test_input"
-                type="textarea"
-                :rows="2"
+                :min-height="90"
                 placeholder="测试输入（如 INSERT 语句或空）"
                 style="flex: 1"
               />
@@ -94,7 +93,7 @@
 
       <!-- 正确答案 SQL -->
       <el-form-item label="正确答案 SQL">
-        <el-input v-model="form.correct_sql" type="textarea" :rows="3" placeholder="SELECT ..." />
+        <SqlEditor v-model="form.correct_sql" :min-height="110" placeholder="SELECT ..." />
         <div class="input-hint">学生的 SQL 会与正确答案的结果进行比对</div>
       </el-form-item>
 
@@ -111,6 +110,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createQuestion, updateQuestion, getQuestionDetail } from '../../api/questions'
+import SqlEditor from '../../components/SqlEditor.vue'
 
 const route = useRoute()
 const router = useRouter()

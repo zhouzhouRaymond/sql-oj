@@ -30,12 +30,11 @@
         </div>
         <div class="description markdown-body" v-html="renderMarkdown(currentQuestion?.description)"></div>
 
-        <el-input
-          v-model="answers[currentQuestion?.id]"
-          type="textarea"
-          :rows="10"
+        <SqlEditor
+          v-if="currentQuestion"
+          v-model="answers[currentQuestion.id]"
+          :min-height="220"
           placeholder="请输入 SQL 语句..."
-          class="sql-editor"
         />
 
         <div class="actions">
@@ -56,6 +55,7 @@ import { startExam } from '../../api/exams'      // 保留 startExam 导入
 import { getQuestionDetail } from '../../api/questions'
 import { marked } from 'marked'
 import request from '../../api/request'          // 直接导入 axios 实例，确保请求体格式正确
+import SqlEditor from '../../components/SqlEditor.vue'
 
 // 配置 marked
 marked.setOptions({
@@ -239,10 +239,6 @@ onUnmounted(() => {
   border-radius: 4px;
   margin: 15px 0;
   line-height: 1.6;
-}
-.sql-editor :deep(textarea) {
-  font-family: 'Courier New', monospace;
-  font-size: 14px;
 }
 .actions {
   margin-top: 20px;
