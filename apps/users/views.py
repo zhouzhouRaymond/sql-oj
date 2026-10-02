@@ -6,8 +6,9 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.token_blacklist.models import (
     BlacklistedToken, OutstandingToken,
 )
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .auth_cookies import clear_refresh_cookie, read_refresh_cookie, set_refresh_cookie
 from .models import User
 from .serializers import (
     LoginSerializer, RegisterSerializer, UserAdminSerializer, UserSerializer,
@@ -36,11 +37,62 @@ class RegisterView(generics.CreateAPIView):
 
 
 class LoginView(TokenObtainPairView):
-    """登录（签发 JWT）。开启单点登录时，新登录会踢掉该账号的旧会话。"""
+    """登录（签发 JWT + 写入登录 Cookie）。开启单点登录时，新登录会踢掉该账号的旧会话。"""
 
     serializer_class = LoginSerializer
     # 按来源 IP 限流，缓解密码暴力破解
     throttle_classes = [LoginRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        refresh_token = response.data.get('refresh')
+        if refresh_token:
+            # 登录 Cookie（HttpOnly）：关闭浏览器后，窗口内可免登录自动续期
+            set_refresh_cookie(response, refresh_token)
+            # 告知前端免登录窗口长度（窗口过期后前端直接要求重新登录）
+            response.data['remember_days'] = settings.LOGIN_REMEMBER_DAYS
+        return response
+
+
+class RefreshView(TokenRefreshView):
+    """刷新 access token：refresh token 优先取自 HttpOnly 登录 Cookie。
+
+    - 浏览器端：Cookie 自动携带（前端不保存 refresh token），刷新成功后 Cookie 轮换、窗口顺延；
+    - 脚本 / 第三方客户端：仍可在请求体里传 ``refresh``；
+    - 刷新失败（过期 / 已拉黑 / 已登出）时顺手清掉浏览器上的登录 Cookie。
+    """
+
+    def post(self, request, *args, **kwargs):
+        try:
+            payload = request.data
+        except Exception:
+            payload = {}
+        if not (isinstance(payload, dict) and payload.get('refresh')):
+            cookie_token = read_refresh_cookie(request)
+            if cookie_token:
+                payload['refresh'] = cookie_token
+            else:
+                # 既没有登录 Cookie 也没有请求体里的 refresh：视为未登录（401）
+                response = Response(
+                    {'detail': '登录状态已失效，请重新登录', 'code': 'not_authenticated'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+                clear_refresh_cookie(response)
+                return response
+
+        try:
+            response = super().post(request, *args, **kwargs)
+        except Exception as exc:
+            # 交给 DRF 生成标准 401 响应，并清掉已失效的登录 Cookie
+            response = self.handle_exception(exc)
+            clear_refresh_cookie(response)
+            return response
+
+        new_refresh = response.data.get('refresh')
+        if new_refresh:
+            set_refresh_cookie(response, new_refresh)
+        response.data['remember_days'] = settings.LOGIN_REMEMBER_DAYS
+        return response
 
 
 class LogoutView(APIView):
@@ -59,7 +111,9 @@ class LogoutView(APIView):
         if getattr(settings, 'SINGLE_SESSION_ENFORCED', False):
             user.current_session = ''
             user.save(update_fields=['current_session'])
-        return Response({'message': '已退出登录'})
+        response = Response({'message': '已退出登录'})
+        clear_refresh_cookie(response)   # 同时清掉浏览器上的登录 Cookie
+        return response
 
 
 class UserViewSet(viewsets.ModelViewSet):

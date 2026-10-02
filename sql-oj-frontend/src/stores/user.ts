@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User } from '../types/api'
 import { login as loginApi, getCurrentUser, logout as logoutApi } from '../api/auth'
+import { clearUserDrafts } from '../utils/draft'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref<User | null>(null)
@@ -10,6 +11,24 @@ export const useUserStore = defineStore('user', () => {
   const sessionChecked = ref(false)
   // 会话恢复请求共享同一个 Promise，避免并发重复请求 /users/me/
   let restorePromise: Promise<boolean> | null = null
+
+  // 免登录窗口的到期时间（本机估算，与服务端登录 Cookie 的滑动有效期一致）
+  const rememberUntilKey = 'remember_until'
+
+  // 记录 / 顺延免登录窗口到期时间（days 为服务端返回的窗口天数）
+  const saveRememberUntil = (days?: number | string | null) => {
+    const value = Number(days)
+    if (!Number.isFinite(value) || value <= 0) return
+    localStorage.setItem(rememberUntilKey, String(Date.now() + value * 86400000))
+  }
+
+  // 本机记录的免登录窗口是否已过期（过期即应要求重新登录）
+  const isRememberExpired = (): boolean => {
+    const raw = localStorage.getItem(rememberUntilKey)
+    if (!raw) return false  // 没有记录时交给服务端判断（刷新失败即要求登录）
+    const until = Number(raw)
+    return Number.isFinite(until) && Date.now() > until
+  }
 
   // 真正的登录态：既要持有 token，也要有与之匹配的用户信息
   const isAuthenticated = computed(() => Boolean(token.value && user.value))
@@ -45,6 +64,8 @@ export const useUserStore = defineStore('user', () => {
       throw new Error('登录响应缺少 access token')
     }
     setToken(access)
+    // 记录免登录窗口的到期时间（登录响应里的 remember_days，默认 7 天）
+    saveRememberUntil(res.data?.remember_days)
     try {
       await fetchUser()
     } catch (error) {
@@ -59,9 +80,12 @@ export const useUserStore = defineStore('user', () => {
   // 再尽力通知后端结束会话（失败忽略，不影响本地登出）。
   const logout = () => {
     const accessToken = token.value
+    // 清理该用户在本机的作答草稿（考试 / 练习），避免换账号后残留
+    clearUserDrafts(user.value?.username)
     user.value = null
     setToken(null)
     localStorage.removeItem('user')
+    localStorage.removeItem(rememberUntilKey)
     sessionChecked.value = true
     if (accessToken) {
       logoutApi(accessToken).catch(() => {})
@@ -85,6 +109,12 @@ export const useUserStore = defineStore('user', () => {
     }
     if (!restorePromise) {
       restorePromise = (async () => {
+        // 免登录窗口已过期：直接要求重新登录（不必再打接口）
+        if (isRememberExpired()) {
+          logout()
+          sessionChecked.value = true
+          return false
+        }
         const storedToken = localStorage.getItem('access_token')
         if (!storedToken) {
           sessionChecked.value = true
@@ -94,7 +124,8 @@ export const useUserStore = defineStore('user', () => {
         try {
           await fetchUser()
         } catch (error) {
-          // token 无效 / 已过期 / 用户不存在：彻底清除本地登录态
+          // 访问令牌过期已由请求拦截器用登录 Cookie 自动续期；
+          // 仍失败说明免登录窗口过期或账号已在其它设备登录：彻底清除本地登录态
           logout()
         } finally {
           sessionChecked.value = true

@@ -36,6 +36,14 @@ def env_bool(key: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def env_int(key: str, default: int) -> int:
+    """读取整数环境变量，缺失或非法时返回默认值。"""
+    try:
+        return int(env_str(key, str(default)))
+    except ValueError:
+        return default
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -186,9 +194,18 @@ REST_FRAMEWORK = {
     },
 }
 
+# 免登录窗口（天）：关闭浏览器后，在该时间内仍可免登录进入系统；超过则必须重新登录。
+# 实现：refresh token 放进 HttpOnly 登录 Cookie，有效期即该窗口，窗口内前端自动续期。
+# 环境变量：LOGIN_REMEMBER_DAYS（默认 7 天，最小 1 天）。
+LOGIN_REMEMBER_DAYS = max(1, env_int('LOGIN_REMEMBER_DAYS', 7))
+# 登录 Cookie 是否只允许 HTTPS 传输：生产（HTTPS）建议设为 True，纯 HTTP 部署保持 False。
+LOGIN_COOKIE_SECURE = env_bool('LOGIN_COOKIE_SECURE', False)
+
 SIMPLE_JWT = {
+    # 访问令牌：短时效，过期后由前端自动用登录 Cookie 换新的（用户无感）
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # 刷新令牌 = 免登录窗口：与登录 Cookie 的有效期一致
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=LOGIN_REMEMBER_DAYS),
     'AUTH_HEADER_TYPES': ('Bearer',),
     # 安全增强：token 内嵌入「密码哈希」声明，认证时校验。
     # 这样修改密码后，旧的 access / refresh token 会立即失效（无需等过期）。

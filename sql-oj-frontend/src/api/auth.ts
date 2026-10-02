@@ -25,6 +25,12 @@ export const getCurrentUser = () => {
   return request.get('/users/me/')
 }
 
+// 刷新访问令牌：refresh token 放在 HttpOnly 登录 Cookie 里（浏览器自动携带），
+// 所以这里无需传参；刷新成功会返回新的 access（同时轮换 Cookie，免登录窗口顺延）。
+export const refreshToken = () => {
+  return request.post('/auth/refresh/', {})
+}
+
 // 登出：通知后端结束当前会话（使已签发的 token 立即失效）。
 // 显式传入 token，因为本地登录态会在此之前被清空。
 export const logout = (accessToken?: string) => {
