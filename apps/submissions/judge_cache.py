@@ -66,12 +66,23 @@ def build_key(
     question_id: int,
     sql: str,
     test_cases: Iterable[Dict[str, Any]],
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> str:
-    return result_cache_key(question_id, sql, test_cases)
+    return result_cache_key(
+        question_id, sql, test_cases,
+        judge_mode=judge_mode, strictness=strictness, compare_names=compare_names,
+    )
 
 
 def get_cached_result(
-    question_id: int, sql: str, test_cases: Iterable[Dict[str, Any]]
+    question_id: int,
+    sql: str,
+    test_cases: Iterable[Dict[str, Any]],
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """命中则返回判题结果字典，未命中/缓存关闭返回 ``None``。"""
     global _hits, _misses, _lookups_while_disabled
@@ -80,7 +91,9 @@ def get_cached_result(
         with _stats_lock:
             _lookups_while_disabled += 1
         return None
-    cached = cache.get(build_key(question_id, sql, test_cases))
+    cached = cache.get(
+        build_key(question_id, sql, test_cases, judge_mode, strictness, compare_names)
+    )
     if isinstance(cached, dict):
         with _stats_lock:
             _hits += 1
@@ -95,8 +108,14 @@ def set_cached_result(
     sql: str,
     test_cases: Iterable[Dict[str, Any]],
     result: Dict[str, Any],
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> None:
     """写入判题结果缓存；缓存关闭时为空操作。"""
     if not cache_enabled() or not isinstance(result, dict):
         return
-    cache.set(build_key(question_id, sql, test_cases), result, _ttl())
+    cache.set(
+        build_key(question_id, sql, test_cases, judge_mode, strictness, compare_names),
+        result, _ttl(),
+    )

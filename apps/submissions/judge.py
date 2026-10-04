@@ -20,10 +20,48 @@ class JudgeTransportError(RuntimeError):
     """与判题服务通信层失败（连接/超时/非 2xx/坏响应），用于熔断统计。"""
 
 
+def judge_service_base_url() -> str:
+    """判题服务根地址：``JUDGE_SERVICE_URL`` 通常指向 ``/judge``，这里去掉该路径。"""
+    url = JUDGE_SERVICE_URL.rstrip('/')
+    if url.endswith('/judge'):
+        url = url[: -len('/judge')]
+    return url
+
+
 def _build_payload(
-    submitted_sql: str, test_cases: List[Dict], create_table_sql: str
+    submitted_sql: str,
+    test_cases: List[Dict],
+    create_table_sql: str,
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> Dict[str, Any]:
-    """构造判题请求体（字段与 docs/judge_api_new.md 3.2 一致）。"""
+    """构造判题请求体。
+
+    - ``query`` 模式：用例带 expected_output / test_input（与
+      docs/judge_api_new.md 3.2 一致）；
+    - ``schema`` 模式：用例带 expected_schema / probes，create_table_sql 不参与。
+    """
+    # 请求侧硬超时上限：不超过 JUDGE_MAX_SQL_TIMEOUT，且留出连接开销
+    sql_timeout = max(1, min(JUDGE_MAX_SQL_TIMEOUT, JUDGE_HTTP_TIMEOUT - 5))
+
+    if judge_mode == 'schema':
+        return {
+            "mode": "schema",
+            "strictness": strictness,
+            "compare_names": bool(compare_names),
+            "submitted_sql": submitted_sql,
+            "test_cases": [
+                {
+                    "test_input": tc.get("test_input", ""),
+                    "expected_schema": tc.get("expected_schema") or {},
+                    "probes": tc.get("probes") or [],
+                }
+                for tc in test_cases
+            ],
+            "timeout": sql_timeout,
+        }
+
     formatted_cases = [
         {
             "expected_output": tc.get("expected_output", ""),
@@ -31,8 +69,6 @@ def _build_payload(
         }
         for tc in test_cases
     ]
-    # 请求侧硬超时上限：不超过 JUDGE_MAX_SQL_TIMEOUT，且留出连接开销
-    sql_timeout = max(1, min(JUDGE_MAX_SQL_TIMEOUT, JUDGE_HTTP_TIMEOUT - 5))
     return {
         "submitted_sql": submitted_sql,
         "test_cases": formatted_cases,
@@ -42,14 +78,22 @@ def _build_payload(
 
 
 def judge_submission_strict(
-    submitted_sql: str, test_cases: List[Dict], create_table_sql: str = ""
+    submitted_sql: str,
+    test_cases: List[Dict],
+    create_table_sql: str = "",
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> Dict[str, Any]:
     """调用判题服务；通信层失败时抛出 :class:`JudgeTransportError`。
 
     与 :func:`judge_submission` 不同，这里不把通信层错误降级成 ERROR 结果，
     而是上抛给上层统计失败率/触发熔断（区分「判题服务故障」与「学生 SQL 写错」）。
     """
-    payload = _build_payload(submitted_sql, test_cases, create_table_sql)
+    payload = _build_payload(
+        submitted_sql, test_cases, create_table_sql,
+        judge_mode, strictness, compare_names,
+    )
     try:
         response = requests.post(
             JUDGE_SERVICE_URL, json=payload, timeout=JUDGE_HTTP_TIMEOUT
@@ -66,7 +110,12 @@ def judge_submission_strict(
 
 
 def judge_submission(
-    submitted_sql: str, test_cases: List[Dict], create_table_sql: str = ""
+    submitted_sql: str,
+    test_cases: List[Dict],
+    create_table_sql: str = "",
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> Dict[str, Any]:
     """调用判题服务进行 SQL 判题（向后兼容：通信层失败降级为 TIMEOUT/ERROR 结果）。
 
@@ -79,7 +128,10 @@ def judge_submission(
         判题结果字典，含 ``passed`` / ``execution_status`` / ``score`` / ``details``。
     """
     try:
-        return judge_submission_strict(submitted_sql, test_cases, create_table_sql)
+        return judge_submission_strict(
+            submitted_sql, test_cases, create_table_sql,
+            judge_mode, strictness, compare_names,
+        )
     except JudgeTransportError:
         return {
             "passed": False,

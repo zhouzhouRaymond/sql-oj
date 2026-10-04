@@ -82,7 +82,7 @@ def _ensure_workers() -> None:
 
 
 def _load_question_bundle(question) -> Dict:
-    """取题目判题元数据（用例 / 建表语句），优先走本地缓存。
+    """取题目判题元数据（判题模式 / 用例 / 建表语句），优先走本地缓存。
 
     用例按 id 固定顺序，保证用例指纹与 judge_details 的编号稳定。
     极端情况（缓存异常、题目刚删除）退回直查，保证判题不被缓存问题中断。
@@ -91,18 +91,31 @@ def _load_question_bundle(question) -> Dict:
     if bundle is not None:
         return bundle
     return {
+        'judge_mode': getattr(question, 'judge_mode', 'query'),
+        'judge_strictness': getattr(question, 'judge_strictness', 'subset'),
+        'judge_compare_names': getattr(question, 'judge_compare_names', False),
         'test_cases': list(
-            question.test_cases.order_by('id').values('test_input', 'expected_output')
+            question.test_cases.order_by('id').values(
+                'test_input', 'expected_output', 'expected_schema', 'probes'
+            )
         ),
         'create_table_sql': question.create_table_sql or '',
     }
 
 
 def _judge_with_guards(
-    question_id: int, submitted_sql: str, test_cases: List[Dict[str, str]], create_table_sql: str
+    question_id: int,
+    submitted_sql: str,
+    test_cases: List[Dict[str, str]],
+    create_table_sql: str,
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> Dict:
     """带缓存 + 熔断的判题调用；返回判题结果字典（不抛通信异常）。"""
-    cached = get_cached_result(question_id, submitted_sql, test_cases)
+    cached = get_cached_result(
+        question_id, submitted_sql, test_cases, judge_mode, strictness, compare_names
+    )
     if cached is not None:
         return cached
 
@@ -113,7 +126,10 @@ def _judge_with_guards(
         return _transport_error_result("判题服务繁忙（熔断中），请稍后重试")
 
     try:
-        result = judge_submission_strict(submitted_sql, test_cases, create_table_sql)
+        result = judge_submission_strict(
+            submitted_sql, test_cases, create_table_sql,
+            judge_mode, strictness, compare_names,
+        )
     except JudgeTransportError as exc:
         judge_breaker.record_failure()
         logger.warning("判题服务通信失败：%s", exc)
@@ -123,7 +139,10 @@ def _judge_with_guards(
     # 只缓存确定性结果（ACCEPTED / WRONG_ANSWER）；判题服务侧 ERROR（如连接池
     # 耗尽、DB 抖动）属瞬时故障，缓存会让相同提交在 TTL 内持续拿到旧错误。
     if result.get('execution_status') in CACHEABLE_STATUSES:
-        set_cached_result(question_id, submitted_sql, test_cases, result)
+        set_cached_result(
+            question_id, submitted_sql, test_cases, result,
+            judge_mode, strictness, compare_names,
+        )
     return result
 
 
@@ -172,6 +191,9 @@ def run_judge_task(submission_id: int) -> None:
         result = _judge_with_guards(
             question.id, submission.submitted_sql, test_cases,
             bundle['create_table_sql'],
+            bundle.get('judge_mode', 'query'),
+            bundle.get('judge_strictness', 'subset'),
+            bundle.get('judge_compare_names', False),
         )
         status = result.get('execution_status') or ERROR
         judge_score = int(result.get('score', 0) or 0)

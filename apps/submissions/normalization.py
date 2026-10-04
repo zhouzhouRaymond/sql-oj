@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from typing import Any, Dict, Iterable, Optional
 
@@ -62,14 +63,13 @@ def _digest(parts: Iterable[str]) -> str:
 def cases_fingerprint(test_cases: Iterable[Dict[str, Any]]) -> str:
     """对用例列表（顺序敏感）生成指纹。
 
-    同时纳入 ``test_input`` 与 ``expected_output``：任一用例的输入或期望
-    输出变化都会换键，避免命中旧结果。
+    序列化整个用例字典：查询模式的 ``test_input`` / ``expected_output`` 与
+    schema 模式的 ``expected_schema`` / ``probes`` 任一变化都会换键。
     """
-    flattened: list[str] = []
-    for case in test_cases:
-        flattened.append(str(case.get("test_input") or ""))
-        flattened.append(str(case.get("expected_output") or ""))
-    return _digest(flattened)
+    return _digest(
+        json.dumps(case, sort_keys=True, ensure_ascii=False, default=str)
+        for case in test_cases
+    )
 
 
 def judge_env_fingerprint() -> str:
@@ -89,10 +89,14 @@ def result_cache_key(
     sql: str,
     test_cases: Iterable[Dict[str, Any]],
     env_fingerprint: Optional[str] = None,
+    judge_mode: str = 'query',
+    strictness: str = 'subset',
+    compare_names: bool = False,
 ) -> str:
-    """按硬性约束拼出结果缓存键：题目 ID + SQL 规范化结果 + 用例 + 环境指纹。"""
+    """按硬性约束拼出结果缓存键：题目 ID + 判题参数 + SQL 规范化 + 用例 + 环境指纹。"""
     normalized = normalize_sql(sql)
     cases_fp = cases_fingerprint(test_cases)
     env_fp = env_fingerprint or judge_env_fingerprint()
-    payload = _digest([str(question_id), normalized, cases_fp, env_fp])
+    options = f'{judge_mode}:{strictness}:{int(bool(compare_names))}'
+    payload = _digest([str(question_id), options, normalized, cases_fp, env_fp])
     return f"judge:result:{payload}"
