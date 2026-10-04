@@ -2,7 +2,14 @@ import request from './request'
 import { fetchAllPages } from './paging'
 
 // 获取题目列表
-export const getQuestions = (params?: { page?: number; ordering?: string }) => {
+// 支持服务端筛选：search（题号/题目名称/描述）、difficulty、is_visible（仅教师）
+export const getQuestions = (params?: {
+  page?: number
+  ordering?: string
+  search?: string
+  difficulty?: string
+  is_visible?: string
+}) => {
   return request.get('/questions/', { params })
 }
 
@@ -14,6 +21,15 @@ export const getAllQuestions = (): Promise<any[]> =>
 // 获取题目详情
 export const getQuestionDetail = (id: number) => {
   return request.get(`/questions/${id}/`)
+}
+
+// 老师端出题辅助：参考 DDL → 期望结构（并可自动生成、验证行为探针）
+export const introspectReference = (data: {
+  reference_sql: string
+  setup_sql?: string
+  suggest_probes?: boolean
+}) => {
+  return request.post('/questions/introspect/', data)
 }
 
 // 创建题目

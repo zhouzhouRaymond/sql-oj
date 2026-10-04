@@ -31,6 +31,17 @@
         </el-radio-group>
       </el-form-item>
 
+      <!-- 判题模式：query=查询结果，schema=DDL 结构判题 -->
+      <el-form-item label="判题模式" required>
+        <el-radio-group v-model="form.judge_mode">
+          <el-radio value="query">查询结果</el-radio>
+          <el-radio value="schema">表结构（DDL）</el-radio>
+        </el-radio-group>
+        <div class="input-hint">
+          表结构模式用于 CREATE TABLE / 约束 / 索引 / ALTER 类题目：执行学生 DDL 后比对结构并跑行为探针
+        </div>
+      </el-form-item>
+
       <!-- 答题失败时是否展示用例明细（默认关闭） -->
       <el-form-item label="失败详情">
         <el-switch v-model="form.show_case_details" />
@@ -39,8 +50,82 @@
         </span>
       </el-form-item>
 
-      <!-- 建表语句 -->
-      <el-form-item label="建表语句">
+      <!-- 表结构模式：出题模板 + 前置语句 + 自动期望/探针 -->
+      <template v-if="form.judge_mode === 'schema'">
+        <el-form-item label="出题模板">
+          <el-select
+            v-model="templateId"
+            placeholder="选择一个模板快速填充"
+            style="width: 280px"
+            @change="applyTemplate"
+          >
+            <el-option
+              v-for="tpl in DDL_TEMPLATES"
+              :key="tpl.id"
+              :label="tpl.label"
+              :value="tpl.id"
+            />
+          </el-select>
+          <span class="input-hint" style="display: inline-block; margin-left: 10px;">
+            模板会填充题目描述与参考 DDL，可再修改
+          </span>
+        </el-form-item>
+
+        <el-form-item label="前置语句">
+          <SqlEditor
+            v-model="form.schema_setup_sql"
+            :min-height="110"
+            placeholder="选填：ALTER 类题目的初始表结构（学生只写 ALTER 语句）"
+          />
+        </el-form-item>
+
+        <el-form-item label="结构严格度">
+          <el-select v-model="form.judge_strictness" style="width: 260px">
+            <el-option label="宽松：多出的列/约束/索引不判错" value="subset" />
+            <el-option label="严格：对象集合必须与期望一致" value="exact" />
+          </el-select>
+          <el-switch
+            v-model="form.judge_compare_names"
+            style="margin-left: 16px"
+            active-text="比对约束/索引名称"
+          />
+        </el-form-item>
+
+        <el-form-item label="期望结构">
+          <el-button type="primary" :loading="generating" @click="generateSchema">
+            由参考 DDL 生成期望结构与探针
+          </el-button>
+          <div class="input-hint">
+            生成后下方会写入期望结构（只读）与自动验证过的行为探针（可编辑 JSON）
+          </div>
+        </el-form-item>
+
+        <el-form-item label="期望结构 JSON">
+          <el-input
+            :model-value="form.schema_expected_schema
+              ? JSON.stringify(form.schema_expected_schema, null, 2) : ''"
+            type="textarea"
+            :rows="6"
+            readonly
+            placeholder="点击上方按钮生成"
+          />
+        </el-form-item>
+
+        <el-form-item label="行为探针 JSON">
+          <el-input
+            v-model="form.schema_probes_text"
+            type="textarea"
+            :rows="6"
+            placeholder='[{"sql": "...", "expect": "error", "error_code": "23505", "description": "..."}]'
+          />
+          <div class="input-hint">
+            探针用于验证约束真的生效；自动生成的探针已在参考结构上验证过，可继续增删
+          </div>
+        </el-form-item>
+      </template>
+
+      <!-- 建表语句（查询模式） -->
+      <el-form-item v-if="form.judge_mode === 'query'" label="建表语句">
         <SqlEditor v-model="form.create_table_sql" :min-height="150" placeholder="CREATE TABLE ..." />
         <div class="input-hint">建表语句中可以包含 INSERT 数据，用于初始化测试环境</div>
       </el-form-item>
@@ -58,7 +143,7 @@
       </el-form-item>
 
       <!-- ✅ 新增：测试用例管理（用于判题） -->
-      <el-form-item label="测试用例">
+      <el-form-item v-if="form.judge_mode === 'query'" label="测试用例">
         <div class="test-cases-area">
           <div
             v-for="(testCase, index) in form.test_cases"
@@ -100,7 +185,7 @@
       </el-form-item>
 
       <!-- 正确答案 SQL -->
-      <el-form-item label="正确答案 SQL">
+      <el-form-item :label="form.judge_mode === 'schema' ? '参考 DDL（标准答案）' : '正确答案 SQL'">
         <SqlEditor v-model="form.correct_sql" :min-height="110" placeholder="SELECT ..." />
         <div class="input-hint">学生的 SQL 会与正确答案的结果进行比对</div>
       </el-form-item>
@@ -117,7 +202,13 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { createQuestion, updateQuestion, getQuestionDetail } from '../../api/questions'
+import {
+  createQuestion,
+  updateQuestion,
+  getQuestionDetail,
+  introspectReference,
+} from '../../api/questions'
+import { DDL_TEMPLATES } from '../../constants/ddlTemplates'
 import SqlEditor from '../../components/SqlEditor.vue'
 
 const route = useRoute()
@@ -126,13 +217,22 @@ const router = useRouter()
 const isEdit = ref(false)
 const loading = ref(false)
 const submitting = ref(false)
+const generating = ref(false)
+const templateId = ref('')
 
 // ✅ 表单包含 test_cases
 const form = ref({
   title: '',
   description: '',
   difficulty: 'easy',
+  judge_mode: 'query',
+  judge_strictness: 'subset',
+  judge_compare_names: false,
   create_table_sql: '',
+  // schema 模式：前置语句 / 期望结构 / 探针 JSON 文本
+  schema_setup_sql: '',
+  schema_expected_schema: null as any,
+  schema_probes_text: '[]',
   sample_input: '',
   sample_output: '',
   correct_sql: '',
@@ -154,6 +254,45 @@ const removeTestCase = (index: number) => {
   form.value.test_cases.splice(index, 1)
 }
 
+// ✅ 出题模板：一键填充题目描述与参考 DDL
+const applyTemplate = (id: string) => {
+  const template = DDL_TEMPLATES.find((item) => item.id === id)
+  if (!template) return
+  form.value.description = template.description
+  form.value.correct_sql = template.reference_sql
+  form.value.schema_setup_sql = template.setup_sql || ''
+  form.value.schema_expected_schema = null
+  form.value.schema_probes_text = '[]'
+}
+
+// ✅ 参考 DDL → 期望结构 + 自动生成并验证过的行为探针
+const generateSchema = async () => {
+  if (!form.value.correct_sql?.trim()) {
+    ElMessage.warning('请先填写参考 DDL（标准答案）')
+    return
+  }
+  generating.value = true
+  try {
+    const res = await introspectReference({
+      reference_sql: form.value.correct_sql,
+      setup_sql: form.value.schema_setup_sql,
+      suggest_probes: true,
+    })
+    const data = res.data || {}
+    if (data.error_message) {
+      ElMessage.error(data.error_message)
+      return
+    }
+    form.value.schema_expected_schema = data.expected_schema || null
+    form.value.schema_probes_text = JSON.stringify(data.suggested_probes || [], null, 2)
+    ElMessage.success('已生成期望结构与探针 ✅')
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.error || '生成失败，请检查参考 DDL')
+  } finally {
+    generating.value = false
+  }
+}
+
 // ✅ 编辑时加载题目数据
 const loadQuestion = async (id: number) => {
   loading.value = true
@@ -164,7 +303,13 @@ const loadQuestion = async (id: number) => {
       title: data.title || '',
       description: data.description || '',
       difficulty: data.difficulty || 'easy',
+      judge_mode: data.judge_mode || 'query',
+      judge_strictness: data.judge_strictness || 'subset',
+      judge_compare_names: !!data.judge_compare_names,
       create_table_sql: data.create_table_sql || '',
+      schema_setup_sql: data.test_cases?.[0]?.test_input || '',
+      schema_expected_schema: data.test_cases?.[0]?.expected_schema || null,
+      schema_probes_text: JSON.stringify(data.test_cases?.[0]?.probes || [], null, 2),
       sample_input: data.sample_input || '',
       sample_output: data.sample_output || '',
       correct_sql: data.answers?.[0]?.correct_sql || '',
@@ -189,17 +334,42 @@ const handleSubmit = async () => {
     return
   }
 
+  // schema 模式：整理成一个结构化测试用例（前置语句 + 期望结构 + 探针）
+  let testCases = form.value.test_cases
+  if (form.value.judge_mode === 'schema') {
+    if (!form.value.schema_expected_schema) {
+      ElMessage.warning('请先点击「生成期望结构」')
+      return
+    }
+    let probes: any[] = []
+    try {
+      probes = JSON.parse(form.value.schema_probes_text || '[]')
+    } catch (error) {
+      ElMessage.error('行为探针 JSON 格式不正确')
+      return
+    }
+    testCases = [{
+      test_input: form.value.schema_setup_sql,
+      expected_output: '',
+      expected_schema: form.value.schema_expected_schema,
+      probes,
+    }] as any
+  }
+
   submitting.value = true
   try {
     const submitData = {
       title: form.value.title,
       description: form.value.description,
       difficulty: form.value.difficulty,
-      create_table_sql: form.value.create_table_sql,
+      judge_mode: form.value.judge_mode,
+      judge_strictness: form.value.judge_strictness,
+      judge_compare_names: form.value.judge_compare_names,
+      create_table_sql: form.value.judge_mode === 'schema' ? '' : form.value.create_table_sql,
       sample_input: form.value.sample_input,
       sample_output: form.value.sample_output,
       answers: form.value.correct_sql ? [{ correct_sql: form.value.correct_sql }] : [],
-      test_cases: form.value.test_cases,
+      test_cases: testCases,
       show_case_details: form.value.show_case_details
     }
 

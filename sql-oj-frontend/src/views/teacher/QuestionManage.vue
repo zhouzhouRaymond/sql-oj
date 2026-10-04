@@ -7,6 +7,12 @@
       </div>
     </div>
 
+    <QuestionFilterBar
+      show-visibility
+      :result-text="filterResultText"
+      @change="onFilterChange"
+    />
+
     <el-table :data="questions" v-loading="loading" stripe>
       <el-table-column prop="id" label="ID" width="60" />
       <!-- ✅ 显示题目名称，如果没有则截取描述（与学生端题库一致） -->
@@ -66,15 +72,18 @@
         <span>下滑加载更多…</span>
       </template>
     </div>
-    <div v-else class="empty-hint">暂无题目</div>
+    <div v-else class="empty-hint">
+      {{ hasActiveFilter ? '没有符合条件的题目' : '暂无题目' }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getQuestions, deleteQuestion, patchQuestion } from '../../api/questions'
+import QuestionFilterBar from '../../components/QuestionFilterBar.vue'
 
 const router = useRouter()
 
@@ -85,6 +94,44 @@ const finished = ref(false)     // 是否已加载完全部题目
 const loadError = ref(false)    // 上一次加载是否失败
 const currentPage = ref(1)
 const total = ref(0)            // 题目总数（以后端 count 为准）
+
+// 筛选条件：由 QuestionFilterBar 触发，改动后重新从第 1 页加载
+const filters = ref({ search: '', difficulty: '', is_visible: '' })
+// 在途请求序号：筛选取代旧请求时用它丢弃过期响应
+let requestSeq = 0
+
+const hasActiveFilter = computed(
+  () => Boolean(filters.value.search || filters.value.difficulty || filters.value.is_visible),
+)
+
+const filterResultText = computed(() => {
+  if (!hasActiveFilter.value || loading.value) return ''
+  return `共 ${total.value} 道符合条件的题目`
+})
+
+const onFilterChange = (next: { search: string; difficulty: string; is_visible: string }) => {
+  filters.value = {
+    search: next.search,
+    difficulty: next.difficulty,
+    is_visible: next.is_visible,
+  }
+  loadQuestions(true)
+}
+
+// 空筛选不下发，保持与后端默认行为一致
+const buildQueryParams = () => {
+  const params: {
+    page: number
+    ordering: string
+    search?: string
+    difficulty?: string
+    is_visible?: string
+  } = { page: currentPage.value, ordering: 'id' }
+  if (filters.value.search) params.search = filters.value.search
+  if (filters.value.difficulty) params.difficulty = filters.value.difficulty
+  if (filters.value.is_visible) params.is_visible = filters.value.is_visible
+  return params
+}
 
 // 正在切换「学生可见」的题目 id（同一行保存期间禁用开关，避免重复提交）
 const savingVisible = ref<number[]>([])
@@ -139,13 +186,17 @@ const toggleVisible = async (row: any) => {
  */
 const loadQuestions = async (reset = false) => {
   if (reset) {
+    // 筛选取代正在加载的这次请求：自增序号让旧响应作废
+    requestSeq += 1
     questions.value = []
     currentPage.value = 1
     finished.value = false
     loadError.value = false
+  } else if (loading.value || loadingMore.value || finished.value || loadError.value) {
+    return
   }
-  if (loading.value || loadingMore.value || finished.value || loadError.value) return
 
+  const seq = requestSeq
   const isFirstPage = currentPage.value === 1
   if (isFirstPage) loading.value = true
   else loadingMore.value = true
@@ -154,7 +205,10 @@ const loadQuestions = async (reset = false) => {
   const anchorScrollY = window.scrollY
 
   try {
-    const res = await getQuestions({ page: currentPage.value, ordering: 'id' })
+    const res = await getQuestions(buildQueryParams())
+    // 期间筛选条件又变了：丢弃这次过期结果，交给最新请求渲染
+    if (seq !== requestSeq) return
+
     const data = res.data || {}
     // 兼容后端未开启分页（直接返回数组）的情况
     const list = Array.isArray(data) ? data : (data.results || [])
@@ -175,17 +229,22 @@ const loadQuestions = async (reset = false) => {
       currentPage.value += 1
     }
   } catch (error) {
+    if (seq !== requestSeq) return
     // 失败时不要标记为“已全部加载”，否则底部会显示错误的总数
     loadError.value = true
     ElMessage.error('加载题目列表失败')
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    // 过期请求不要清掉最新请求的加载状态
+    if (seq === requestSeq) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 
-  // 等新数据渲染完成后再恢复滚动位置，保证「停在原来的位置」
+  // 等新数据渲染完成后再恢复滚动位置（重置筛选时回到顶部看结果）
   await nextTick()
-  window.scrollTo(0, anchorScrollY)
+  if (reset) window.scrollTo(0, 0)
+  else window.scrollTo(0, anchorScrollY)
 
   // 内容不足一屏（刚加载完底部仍在视口内）时，继续加载下一页
   if (!finished.value && !loadError.value && !loading.value && !loadingMore.value && nearBottom()) {
