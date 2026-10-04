@@ -50,5 +50,12 @@ PY
 echo "[entrypoint] 执行数据库迁移..."
 python manage.py migrate --noinput
 
+# 角色分流：JUDGE_ROLE=worker 时启动独立判题 Worker（消费 Redis 队列），
+# 否则启动 Django Web 服务。Worker 数量可用 JUDGE_WORKER_COUNT 调整。
+if [ "${JUDGE_ROLE:-web}" = "worker" ]; then
+  echo "[entrypoint] starting judge worker (count=${JUDGE_WORKER_COUNT:-4}) ..."
+  exec python manage.py judge_worker --workers "${JUDGE_WORKER_COUNT:-4}"
+fi
+
 echo "[entrypoint] 启动 Django 服务（0.0.0.0:8000）..."
 exec python manage.py runserver 0.0.0.0:8000
