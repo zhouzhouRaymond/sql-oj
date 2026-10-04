@@ -9,12 +9,20 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, Iterable, Optional
 
 from django.conf import settings
 from django.core.cache import cache
 
 from .normalization import result_cache_key
+
+# 进程内的命中统计（用于监控缓存命中率；计数器本身不共享，缓存数据是否
+# 共享取决于 CACHES 后端：LocMem 是单进程，Redis 是跨进程）。
+_stats_lock = threading.Lock()
+_hits = 0
+_misses = 0
+_lookups_while_disabled = 0
 
 
 def _ttl() -> int:
@@ -29,6 +37,31 @@ def cache_enabled() -> bool:
     return _ttl() > 0
 
 
+def reset_cache_stats() -> None:
+    """清零命中统计（测试或按监控窗口重置时使用）。"""
+    global _hits, _misses, _lookups_while_disabled
+    with _stats_lock:
+        _hits = _misses = _lookups_while_disabled = 0
+
+
+def cache_stats() -> Dict[str, float]:
+    """返回当前进程的结果缓存统计。
+
+    ``hit_rate`` = hits / (hits + misses)，缓存关闭时的查询不计入分母，
+    避免关闭缓存被误读成「命中率为 0」。
+    """
+    with _stats_lock:
+        hits, misses, disabled = _hits, _misses, _lookups_while_disabled
+    total = hits + misses
+    return {
+        'hits': hits,
+        'misses': misses,
+        'lookups': total,
+        'lookups_while_disabled': disabled,
+        'hit_rate': round(hits / total, 4) if total else 0.0,
+    }
+
+
 def build_key(
     question_id: int,
     sql: str,
@@ -41,10 +74,20 @@ def get_cached_result(
     question_id: int, sql: str, test_cases: Iterable[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
     """命中则返回判题结果字典，未命中/缓存关闭返回 ``None``。"""
+    global _hits, _misses, _lookups_while_disabled
+
     if not cache_enabled():
+        with _stats_lock:
+            _lookups_while_disabled += 1
         return None
     cached = cache.get(build_key(question_id, sql, test_cases))
-    return cached if isinstance(cached, dict) else None
+    if isinstance(cached, dict):
+        with _stats_lock:
+            _hits += 1
+        return cached
+    with _stats_lock:
+        _misses += 1
+    return None
 
 
 def set_cached_result(

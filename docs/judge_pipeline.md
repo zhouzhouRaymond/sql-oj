@@ -46,6 +46,10 @@
   （连接池耗尽、DB 抖动）不缓存，避免相同提交在 TTL 内持续拿到旧错误。
 - 默认有效期 `JUDGE_RESULT_CACHE_TTL=3600` 秒，<=0 关闭。
 - 缓存后端默认进程内 LocMem；配置 `REDIS_URL` 后切换到 Redis，跨 worker 共享。
+- 命中率由 `apps/submissions/judge_cache.py` 的 `cache_stats()` 给出
+  （`hit_rate = hits / (hits + misses)`，计数器按进程统计；`reset_cache_stats()`
+  可重置统计窗口）。测试见 `apps/submissions/test_cache_hit_rate.py`：
+  10 次相同提交只真正判题 1 次、命中率 0.9；5 条 SQL 各重复 20 次的混合负载命中率 0.95。
 
 ### 2.3 幂等 / 限流 / 熔断
 
@@ -73,7 +77,7 @@ QPS / 延迟 / 失败率，容器复用率与资源水位由 `docker stats` / co
 | 队列堆积量 | 待判题队列长度峰值 / 稳态 | `apps.submissions.judging.queue_depth()`（可打点到监控） |
 | 容器复用率 | 复用执行次数 / (复用 + 新建)；启用容器池后由池统计给出 | `GET http://<judge-service>/pool` 的 `reuse_rate` / `reused` / `created` |
 | 失败率 | 非判题结果响应占比（HTTP 错误 / `ERROR` / 客户端失败） | `load_test.py` 输出的 `non-judge responses` 与状态分布 |
-| 缓存命中率 | 命中结果缓存的提交数 / 总提交数 | 结果缓存计数器（可基于 `judge_cache` 打点） |
+| 缓存命中率 | 命中结果缓存的提交数 / 总提交数 | `apps.submissions.judge_cache.cache_stats()` 的 `hits` / `misses` / `hit_rate` |
 | 数据库写入延迟 | 结果从产生到落库的批量刷写延迟 | `JUDGE_RESULT_FLUSH_INTERVAL` 与写线程耗时 |
 | 单节点 CPU/内存/IO | 判题库与判题服务容器水位 | `docker stats`，对照 cgroup 上限 |
 
