@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from .feedback import student_case_message
 from .models import Submission
 from .status import ACCEPTED
 
@@ -50,7 +51,12 @@ class SubmissionSerializer(serializers.ModelSerializer):
             item = {
                 'index': idx + 1,  # 前端按 1 开始显示
                 'actual_output': case.get('actual_output') or '',
-                'error_message': case.get('error_message') or '',
+                # 学生默认只看到失败分类，教师/开启明细时才给具体原因（脱敏）
+                'error_message': (
+                    case.get('error_message') or ''
+                    if show_case_data
+                    else student_case_message(case)
+                ),
             }
             if show_case_data and 0 <= idx < len(test_cases):
                 item['test_input'] = test_cases[idx].test_input or ''
@@ -65,12 +71,16 @@ class SubmissionSerializer(serializers.ModelSerializer):
                 for idx, case in enumerate(cases)
             ]
 
+        error_message = raw.get('error_message') or ''
+        if not show_case_data and getattr(obj.question, 'judge_mode', 'query') == 'schema':
+            error_message = '判题未通过，请检查你的 DDL 语句'
+
         return {
             'total': len(cases),
             'passed_count': len(cases) - len(failed_cases),
             'failed_cases': failed_cases,
             'case_outputs': case_outputs,
-            'error_message': raw.get('error_message') or '',
+            'error_message': error_message,
         }
 
 
