@@ -36,3 +36,9 @@ class QuestionBundleCacheTests(DjangoTestCase):
         )
         # 信号应已失效缓存，重新取到 2 个用例
         self.assertEqual(len(get_bundle(self.question.id)['test_cases']), 2)
+
+    def test_cached_bundle_avoids_extra_queries(self):
+        get_bundle(self.question.id)  # 预热缓存
+        with self.assertNumQueries(0):
+            bundle = get_bundle(self.question.id)
+        self.assertEqual(len(bundle['test_cases']), 1)
