@@ -11,11 +11,22 @@ from rest_framework.exceptions import ValidationError
 
 from .models import Submission
 from .serializers import SubmissionSerializer, SubmissionListSerializer
+from .idempotency import (
+    find_duplicate_submission,
+    idempotency_key,
+    remember_submission,
+)
 from .judging import JudgeQueueFull, PENDING, enqueue_judge
 from apps.questions.models import Question
 from apps.exams.models import Exam
 from apps.users.models import User
 from apps.users.permissions import IsTeacher
+from apps.users.throttles import (
+    SubmitGlobalThrottle,
+    SubmitQuestionThrottle,
+    SubmitUserThrottle,
+)
+
 
 
 # 只给日期（2026-10-02）或只精确到分钟（2026-10-02 10:30）
@@ -79,6 +90,16 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         if self.action in ('list', 'retrieve'):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated()]
+
+    def get_throttles(self):
+        """提交判题走三级限流（用户级 / 题目级 / 全局），其余动作不限流。"""
+        if self.action == 'submit':
+            return [
+                SubmitUserThrottle(),
+                SubmitQuestionThrottle(),
+                SubmitGlobalThrottle(),
+            ]
+        return super().get_throttles()
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -147,6 +168,18 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             return Response({'error': '题目不存在'}, status=status.HTTP_404_NOT_FOUND)
 
         # 先落库为待判题，再交给后台线程判题，请求线程立即返回而不被阻塞
+        exam_id = exam_id or None
+        idem_key = idempotency_key(request.user.id, question.id, exam_id, submitted_sql)
+        duplicate = find_duplicate_submission(
+            Submission, request.user, question, exam_id, submitted_sql, idem_key
+        )
+        if duplicate is not None:
+            remember_submission(idem_key, duplicate.id)
+            return Response(
+                SubmissionSerializer(duplicate).data,
+                status=status.HTTP_202_ACCEPTED,
+            )
+
         submission = Submission.objects.create(
             student=request.user,
             question=question,
@@ -165,6 +198,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        remember_submission(idem_key, submission.id)
         return Response(
             SubmissionSerializer(submission).data,
             status=status.HTTP_202_ACCEPTED

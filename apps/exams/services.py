@@ -6,6 +6,11 @@
 from django.utils import timezone
 
 from apps.questions.models import Question
+from apps.submissions.idempotency import (
+    find_duplicate_submission,
+    idempotency_key,
+    remember_submission,
+)
 from apps.submissions.judging import JudgeQueueFull, PENDING, enqueue_judge
 from apps.submissions.models import Submission
 
@@ -15,9 +20,12 @@ from .models import ExamAttempt
 def create_exam_submission(exam, student, question_id, submitted_sql):
     """为某道题创建一条「待判题」的考试提交并交给判题队列。
 
+    相同（学生+考试+题目+SQL 规范化）在幂等窗口内重复调用会复用既有提交，
+    不重复创建判题任务。
+
     返回 ``(submission, error)``：
 
-    - ``error`` 为空：已成功入队，``submission`` 即新建的记录；
+    - ``error`` 为空：已成功入队，``submission`` 即对应记录；
     - ``error`` 为「题目不存在」：``submission`` 为 None；
     - ``error`` 为「判题服务繁忙」：``submission`` 已落库但状态为 ERROR。
     """
@@ -25,6 +33,14 @@ def create_exam_submission(exam, student, question_id, submitted_sql):
         question = Question.objects.get(id=question_id)
     except Question.DoesNotExist:
         return None, '题目不存在'
+
+    idem_key = idempotency_key(student.id, question.id, exam.id, submitted_sql)
+    duplicate = find_duplicate_submission(
+        Submission, student, question, exam.id, submitted_sql, idem_key
+    )
+    if duplicate is not None:
+        remember_submission(idem_key, duplicate.id)
+        return duplicate, ''
 
     submission = Submission.objects.create(
         student=student, question=question, exam=exam,
@@ -36,6 +52,7 @@ def create_exam_submission(exam, student, question_id, submitted_sql):
         submission.execution_status = 'ERROR'
         submission.save(update_fields=['execution_status'])
         return submission, '判题服务繁忙'
+    remember_submission(idem_key, submission.id)
     return submission, ''
 
 
