@@ -178,5 +178,50 @@ class NormalizeExpectedTests(unittest.TestCase):
         self.assertEqual(normalized['indexes'], [])
 
 
+class ServiceTokenTests(unittest.TestCase):
+    """服务间令牌校验：/health 开放，其余接口在配置令牌后必须携带正确请求头。"""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+
+        import judge_service_new as core
+
+        self.core = core
+        self.client = TestClient(core.app)
+        self._original_token = core.JUDGE_SERVICE_TOKEN
+
+    def tearDown(self):
+        self.core.JUDGE_SERVICE_TOKEN = self._original_token
+
+    def test_token_unset_allows_requests(self):
+        self.core.JUDGE_SERVICE_TOKEN = ''
+        self.assertEqual(self.client.get('/health').status_code, 200)
+        self.assertEqual(self.client.get('/pool').status_code, 200)
+
+    def test_token_enforced_but_health_open(self):
+        self.core.JUDGE_SERVICE_TOKEN = 'secret-token'
+        self.assertEqual(self.client.get('/health').status_code, 200)
+        self.assertEqual(self.client.get('/pool').status_code, 401)
+        self.assertEqual(
+            self.client.get('/pool', headers={'X-Judge-Token': 'wrong'}).status_code,
+            401,
+        )
+        ok = self.client.get('/pool', headers={'X-Judge-Token': 'secret-token'})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json(), {'enabled': False})
+
+    def test_judge_and_introspect_require_token(self):
+        self.core.JUDGE_SERVICE_TOKEN = 'secret-token'
+        judge_body = {
+            'submitted_sql': 'SELECT 1',
+            'test_cases': [{'expected_output': '1'}],
+        }
+        self.assertEqual(self.client.post('/judge', json=judge_body).status_code, 401)
+        self.assertEqual(
+            self.client.post('/introspect', json={'sql': 'CREATE TABLE t (id INT)'}).status_code,
+            401,
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

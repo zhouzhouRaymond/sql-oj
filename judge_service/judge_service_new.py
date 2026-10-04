@@ -1,3 +1,4 @@
+import hmac
 import logging
 import signal
 import threading
@@ -10,7 +11,7 @@ from uuid import uuid4
 
 import psycopg2
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from psycopg2 import sql
 from psycopg2.errors import QueryCanceled
 from psycopg2.pool import PoolError
@@ -99,6 +100,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SQL Judge Service", version="2.4.0", lifespan=lifespan)
+
+
+# 服务间共享令牌：judge-service 只应被 backend / judge-worker 调用。
+# 未配置时（本地单跑、单测）放行并告警；docker-compose 会为两端注入同一个令牌。
+JUDGE_SERVICE_TOKEN = get_str("JUDGE_SERVICE_TOKEN", "")
+
+if not JUDGE_SERVICE_TOKEN:
+    logger.warning(
+        "未配置 JUDGE_SERVICE_TOKEN，判题接口将以无鉴权模式运行；"
+        "生产环境请通过环境变量注入随机令牌"
+    )
+
+
+def require_service_token(
+    x_judge_token: str = Header(default="", alias="X-Judge-Token"),
+) -> None:
+    """校验调用方携带的服务间令牌（常量时间比较，避免时序侧信道）。"""
+    if not JUDGE_SERVICE_TOKEN:
+        return
+    if not x_judge_token or not hmac.compare_digest(x_judge_token, JUDGE_SERVICE_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid judge service token",
+        )
+
 
 class Probe(BaseModel):
     """schema 判题的行为探针：断言语句成功，或按错误码断言失败。"""
@@ -778,7 +804,11 @@ def _error_response(error_message: Optional[str] = None) -> JudgeResponse:
     )
 
 
-@app.post("/judge", response_model=JudgeResponse)
+@app.post(
+    "/judge",
+    response_model=JudgeResponse,
+    dependencies=[Depends(require_service_token)],
+)
 def judge(request: JudgeRequest) -> JudgeResponse:
     # 同步 def：内部为阻塞式 I/O（psycopg2），由 FastAPI 放入线程池运行，避免阻塞事件循环
     try:
@@ -807,7 +837,7 @@ def judge(request: JudgeRequest) -> JudgeResponse:
         return _error_response()
 
 
-@app.get("/pool")
+@app.get("/pool", dependencies=[Depends(require_service_token)])
 def pool_status():
     """容器池状态（监控：容器复用率 / 就绪数）。未启用时返回 enabled=False。"""
     if container_pool is None:
@@ -830,7 +860,11 @@ class IntrospectResponse(BaseModel):
     error_message: Optional[str] = None
 
 
-@app.post("/introspect", response_model=IntrospectResponse)
+@app.post(
+    "/introspect",
+    response_model=IntrospectResponse,
+    dependencies=[Depends(require_service_token)],
+)
 def introspect(request: IntrospectRequest):
     """把参考 DDL 跑一遍并返回规范化结构快照（教师端生成期望结构用）。
 
