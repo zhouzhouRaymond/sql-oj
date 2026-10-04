@@ -13,7 +13,7 @@ from .models import User
 from .serializers import (
     LoginSerializer, RegisterSerializer, UserAdminSerializer, UserSerializer,
 )
-from .permissions import IsTeacher, IsOwnerOrTeacher
+from .permissions import IsTeacher
 from .throttles import LoginRateThrottle
 from apps.submissions.models import Submission
 from apps.questions.models import Question

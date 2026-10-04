@@ -1,12 +1,9 @@
-from rest_framework import viewsets, permissions, status, filters
-from rest_framework.response import Response
+from rest_framework import filters, permissions, viewsets
 
-from .models import Question, Answer, TestCase
-from .serializers import (
-    QuestionSerializer, QuestionStudentSerializer,
-    AnswerSerializer, TestCaseSerializer
-)
 from apps.users.permissions import IsTeacher
+
+from .models import Answer, Question, TestCase
+from .serializers import QuestionSerializer, QuestionStudentSerializer
 
 
 class QuestionViewSet(viewsets.ModelViewSet):
