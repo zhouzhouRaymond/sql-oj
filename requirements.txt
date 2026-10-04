@@ -8,3 +8,5 @@ PyMySQL>=1.1
 cryptography>=42.0
 sqlparse>=0.5
 requests>=2.31
+# Redis 判题队列 / 跨进程共享缓存（JUDGE_QUEUE_BACKEND=redis 或配置 REDIS_URL 时需要）
+redis>=5.0
