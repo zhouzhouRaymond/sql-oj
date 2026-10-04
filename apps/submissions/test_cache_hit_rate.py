@@ -37,6 +37,22 @@ TRANSIENT_ERROR_RESULT = {
     'score': 0,
     'details': [],
 }
+SCHEMA_CASES = [{
+    'test_input': '',
+    'expected_schema': {'tables': {'t': {'columns': []}}},
+    'probes': [],
+}]
+SCHEMA_ACCEPTED_RESULT = {
+    'passed': True,
+    'execution_status': 'ACCEPTED',
+    'score': 100,
+    'details': [{
+        'test_case_id': 0,
+        'passed': True,
+        'actual_output': '表 t:',
+        'checks': [{'name': '表 t', 'passed': True, 'detail': ''}],
+    }],
+}
 
 
 @override_settings(JUDGE_RESULT_CACHE_TTL=3600)
@@ -127,3 +143,19 @@ class JudgeResultCacheHitRateTests(SimpleTestCase):
         self.assertEqual(stats['lookups'], 0)
         self.assertEqual(stats['lookups_while_disabled'], 3)
         self.assertEqual(stats['hit_rate'], 0.0)
+
+    def test_schema_mode_results_are_cached_like_query_mode(self):
+        with patch(
+            'apps.submissions.judging.judge_submission_strict',
+            return_value=dict(SCHEMA_ACCEPTED_RESULT),
+        ) as judge:
+            for _ in range(5):
+                _judge_with_guards(
+                    QUESTION_ID, 'create table t (id int)', SCHEMA_CASES, '',
+                    judge_mode='schema',
+                )
+
+        self.assertEqual(judge.call_count, 1)
+        stats = judge_cache.cache_stats()
+        self.assertEqual(stats['hits'], 4)
+        self.assertEqual(stats['misses'], 1)

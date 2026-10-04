@@ -55,6 +55,48 @@ class JudgePayloadTests(SimpleTestCase):
         ):
             self.assertEqual(_build_payload('select 1', [{}], '')['timeout'], 1)
 
+    def test_query_mode_payload_keeps_original_contract(self):
+        payload = _build_payload(
+            'select 1', [{'expected_output': 'a'}], 'CREATE TABLE t (id INT);'
+        )
+        self.assertNotIn('mode', payload)
+        self.assertEqual(payload['create_table_sql'], 'CREATE TABLE t (id INT);')
+        self.assertEqual(
+            payload['test_cases'], [{'expected_output': 'a', 'test_input': ''}]
+        )
+
+    def test_schema_mode_payload_uses_expected_schema_and_probes(self):
+        expected_schema = {'tables': {'t': {'columns': []}}}
+        probes = [{'sql': 'INSERT INTO t VALUES (1)', 'expect': 'ok'}]
+        payload = _build_payload(
+            'CREATE TABLE t (id INT);',
+            [{'test_input': '', 'expected_schema': expected_schema, 'probes': probes}],
+            'ignored for schema mode',
+            judge_mode='schema',
+        )
+
+        self.assertEqual(payload['mode'], 'schema')
+        self.assertNotIn('create_table_sql', payload)
+        self.assertEqual(payload['strictness'], 'subset')
+        self.assertFalse(payload['compare_names'])
+        case = payload['test_cases'][0]
+        self.assertEqual(case['expected_schema'], expected_schema)
+        self.assertEqual(case['probes'], probes)
+        self.assertNotIn('expected_output', case)
+
+    def test_schema_mode_payload_defaults_empty_expectation(self):
+        payload = _build_payload('CREATE TABLE t (id INT);', [{}], '', judge_mode='schema')
+        self.assertEqual(payload['test_cases'][0]['expected_schema'], {})
+        self.assertEqual(payload['test_cases'][0]['probes'], [])
+
+    def test_schema_mode_payload_carries_strictness_and_name_flag(self):
+        payload = _build_payload(
+            'CREATE TABLE t (id INT);', [{}], '',
+            judge_mode='schema', strictness='exact', compare_names=True,
+        )
+        self.assertEqual(payload['strictness'], 'exact')
+        self.assertTrue(payload['compare_names'])
+
 
 class JudgeClientTests(SimpleTestCase):
     def test_strict_client_posts_to_configured_url(self):

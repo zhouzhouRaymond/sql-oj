@@ -55,6 +55,37 @@ class SqlNormalizationTests(SimpleTestCase):
             result_cache_key(1, 'select 1', [second, first]),
         )
 
+    def test_judge_mode_and_expected_schema_change_cache_key(self):
+        query_cases = [{'test_input': '', 'expected_output': 'a'}]
+        schema_a = [{'expected_schema': {'tables': {'t': {'columns': []}}}, 'probes': []}]
+        schema_b = [{'expected_schema': {'tables': {'t': {'primary_key': ['id']}}}, 'probes': []}]
+
+        self.assertNotEqual(
+            result_cache_key(1, 'select 1', query_cases),
+            result_cache_key(1, 'select 1', query_cases, judge_mode='schema'),
+        )
+        self.assertNotEqual(
+            result_cache_key(1, 'select 1', schema_a, judge_mode='schema'),
+            result_cache_key(1, 'select 1', schema_b, judge_mode='schema'),
+        )
+
+    def test_strictness_and_name_flag_change_cache_key(self):
+        cases = [{'expected_schema': {'tables': {}}, 'probes': []}]
+        self.assertNotEqual(
+            result_cache_key(1, 'create table t (id int)', cases, judge_mode='schema'),
+            result_cache_key(
+                1, 'create table t (id int)', cases,
+                judge_mode='schema', strictness='exact',
+            ),
+        )
+        self.assertNotEqual(
+            result_cache_key(1, 'create table t (id int)', cases, judge_mode='schema'),
+            result_cache_key(
+                1, 'create table t (id int)', cases,
+                judge_mode='schema', compare_names=True,
+            ),
+        )
+
 
 class SubmitIdempotencyTests(APITestCase):
     """相同提交在幂等窗口内应复用同一条提交，不重复创建判题任务。"""
