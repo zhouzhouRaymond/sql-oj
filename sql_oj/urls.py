@@ -15,9 +15,17 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import path, include
 
+
+def health(_request):
+    """轻量健康探针：供容器 healthcheck / 负载均衡使用。"""
+    return JsonResponse({"status": "ok"})
+
+
 urlpatterns = [
+    path('health', health),
     path('admin/', admin.site.urls),
     # 认证相关（注册/登录/刷新Token）
     path('api/auth/', include('apps.users.urls_auth')),
