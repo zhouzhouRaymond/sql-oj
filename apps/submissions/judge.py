@@ -14,6 +14,8 @@ JUDGE_SERVICE_URL = os.environ.get("JUDGE_SERVICE_URL", "http://localhost:8080/j
 JUDGE_HTTP_TIMEOUT = int(os.environ.get("JUDGE_HTTP_TIMEOUT", "35"))
 # 单条 SQL 执行时间上限（秒）：作为请求体 timeout 的封顶，避免传入过大值
 JUDGE_MAX_SQL_TIMEOUT = int(os.environ.get("JUDGE_MAX_SQL_TIMEOUT", "60"))
+# 服务间调用令牌：与 judge-service 的 JUDGE_SERVICE_TOKEN 保持一致（见 docker-compose.yml）
+JUDGE_SERVICE_TOKEN = os.environ.get("JUDGE_SERVICE_TOKEN", "")
 
 
 class JudgeTransportError(RuntimeError):
@@ -26,6 +28,13 @@ def judge_service_base_url() -> str:
     if url.endswith('/judge'):
         url = url[: -len('/judge')]
     return url
+
+
+def judge_service_headers() -> Dict[str, str]:
+    """调用判题服务时携带的请求头：配置了令牌才带上 X-Judge-Token。"""
+    if JUDGE_SERVICE_TOKEN:
+        return {"X-Judge-Token": JUDGE_SERVICE_TOKEN}
+    return {}
 
 
 def _build_payload(
@@ -96,7 +105,10 @@ def judge_submission_strict(
     )
     try:
         response = requests.post(
-            JUDGE_SERVICE_URL, json=payload, timeout=JUDGE_HTTP_TIMEOUT
+            JUDGE_SERVICE_URL,
+            json=payload,
+            timeout=JUDGE_HTTP_TIMEOUT,
+            headers=judge_service_headers(),
         )
         response.raise_for_status()
     except (requests.Timeout, requests.ConnectionError) as exc:

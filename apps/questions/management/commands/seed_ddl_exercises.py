@@ -38,10 +38,14 @@ DEFAULT_JUDGE_URL = _default_judge_url()
 
 
 def _post_json(base_url, path, payload, timeout=60):
+    headers = {'Content-Type': 'application/json'}
+    token = os.environ.get('JUDGE_SERVICE_TOKEN', '').strip()
+    if token:
+        headers['X-Judge-Token'] = token
     request = urllib.request.Request(
         base_url.rstrip('/') + path,
         data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode('utf-8'))

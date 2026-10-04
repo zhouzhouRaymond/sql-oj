@@ -4,7 +4,11 @@ from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.submissions.judge import JUDGE_HTTP_TIMEOUT, judge_service_base_url
+from apps.submissions.judge import (
+    JUDGE_HTTP_TIMEOUT,
+    judge_service_base_url,
+    judge_service_headers,
+)
 from apps.users.permissions import IsTeacher
 
 from .models import Answer, Question, TestCase
@@ -85,6 +89,7 @@ class QuestionViewSet(viewsets.ModelViewSet):
                 judge_service_base_url() + '/introspect',
                 json=payload,
                 timeout=JUDGE_HTTP_TIMEOUT + 30,
+                headers=judge_service_headers(),
             )
             response.raise_for_status()
             return Response(response.json())

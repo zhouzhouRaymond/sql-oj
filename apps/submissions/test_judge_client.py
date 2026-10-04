@@ -112,6 +112,26 @@ class JudgeClientTests(SimpleTestCase):
         self.assertIn('json', kwargs)
         self.assertEqual(kwargs['timeout'], judge.JUDGE_HTTP_TIMEOUT)
 
+    def test_client_sends_service_token_header_when_configured(self):
+        with patch.object(judge, 'JUDGE_SERVICE_TOKEN', 'test-token'), patch(
+            'apps.submissions.judge.requests.post',
+            return_value=_response({'passed': True, 'execution_status': 'ACCEPTED'}),
+        ) as post:
+            judge_submission_strict('select 1', [{'expected_output': 'x'}], '')
+
+        _, kwargs = post.call_args
+        self.assertEqual(kwargs['headers'], {'X-Judge-Token': 'test-token'})
+
+    def test_client_omits_service_token_header_when_unset(self):
+        with patch.object(judge, 'JUDGE_SERVICE_TOKEN', ''), patch(
+            'apps.submissions.judge.requests.post',
+            return_value=_response({'passed': True, 'execution_status': 'ACCEPTED'}),
+        ) as post:
+            judge_submission_strict('select 1', [{'expected_output': 'x'}], '')
+
+        _, kwargs = post.call_args
+        self.assertEqual(kwargs['headers'], {})
+
     def test_transport_failures_raise_transport_error(self):
         cases = {
             'timeout': requests.Timeout('timed out'),

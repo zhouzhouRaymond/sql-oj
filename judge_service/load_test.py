@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import queue
 import sys
 import threading
@@ -35,6 +36,8 @@ from urllib.parse import urlparse
 DEFAULT_URL = "http://localhost:8080/judge"
 # 正常判题结果；其余状态（HTTP 错误、ERROR:原因、客户端失败等）都算作「非判题响应」
 JUDGE_STATUSES = ("ACCEPTED", "WRONG_ANSWER")
+# 服务间令牌请求头：main() 里按 --token / JUDGE_SERVICE_TOKEN 填充
+EXTRA_HEADERS = {}
 
 
 def build_payload(cases=1, rows=200, heavy=False):
@@ -79,7 +82,8 @@ def one_request(conn, path, body):
     try:
         conn.request("POST", path, body=payload,
                      headers={"Content-Type": "application/json",
-                              "Content-Length": str(len(payload))})
+                              "Content-Length": str(len(payload)),
+                              **EXTRA_HEADERS})
         response = conn.getresponse()
         raw = response.read()
     except Exception as exc:                      # 连接失败 / 客户端超时
@@ -204,7 +208,15 @@ def main():
     parser.add_argument("--heavy", action="store_true", help="使用 CPU 型重负载")
     parser.add_argument("--json", dest="json_out", default="",
                         help="把每档结果同时写成 JSON 文件")
+    parser.add_argument("--token", default=os.environ.get("JUDGE_SERVICE_TOKEN", ""),
+                        help="判题服务鉴权令牌（默认取 JUDGE_SERVICE_TOKEN）")
     args = parser.parse_args()
+
+    if args.token.strip():
+        EXTRA_HEADERS["X-Judge-Token"] = args.token.strip()
+    else:
+        print("warn: 未提供 JUDGE_SERVICE_TOKEN，判题服务开启鉴权时会返回 401",
+              file=sys.stderr)
 
     cases = args.cases or (4 if args.heavy else 1)
     rows = args.rows or (800 if args.heavy else 200)
