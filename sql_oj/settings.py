@@ -190,7 +190,12 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     # 接口限流：登录接口按来源 IP 限制尝试频率，缓解密码暴力破解
     'DEFAULT_THROTTLE_RATES': {
-        'login': '10/min',
+        # 登录暴破防护：按来源 IP 限流
+        'login': env_str('THROTTLE_LOGIN_RATE', '10/min'),
+        # 判题提交三级限流：用户级 / 题目级 / 全局（见 apps/users/throttles.py）
+        'submit_user': env_str('THROTTLE_SUBMIT_USER', '20/min'),
+        'submit_question': env_str('THROTTLE_SUBMIT_QUESTION', '60/min'),
+        'submit_global': env_str('THROTTLE_SUBMIT_GLOBAL', '600/min'),
     },
 }
 
@@ -224,3 +229,30 @@ SINGLE_SESSION_ENFORCED = env_bool('SINGLE_SESSION_ENFORCED', True)
 CORS_ALLOW_ALL_ORIGINS = True  # 开发阶段全开
 
 AUTH_USER_MODEL = 'users.User'  # 使用自定义用户模型
+
+
+# ========== 缓存 ==========
+# 默认进程内 LocMem；配置 REDIS_URL 后改用 Redis（跨进程共享），
+# 使判题结果缓存、熔断状态、限流计数在多 worker 间保持一致。
+# 说明：RedisCache 后端需要安装 redis 包；未配置 REDIS_URL 时不会用到它。
+REDIS_URL = env_str('REDIS_URL', '')
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'sql-oj-default',
+        }
+    }
+
+# 判题结果缓存有效期（秒），<=0 关闭结果缓存
+JUDGE_RESULT_CACHE_TTL = env_int('JUDGE_RESULT_CACHE_TTL', 3600)
+
+# 题目判题元数据（用例 / 建表语句）缓存有效期（秒），<=0 关闭；变更时信号立即失效
+JUDGE_QUESTION_CACHE_TTL = env_int('JUDGE_QUESTION_CACHE_TTL', 300)
