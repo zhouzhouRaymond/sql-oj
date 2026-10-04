@@ -243,6 +243,57 @@ SQL 执行超时会作为对应测试用例的 `error_message` 返回（`passed=
 
 ---
 
+### 3.3 结构判题（schema 模式）
+
+用于 CREATE TABLE / 索引 / 约束等 DDL 题目：DDL 没有结果集，判题服务改为
+「执行学生 DDL → 读取 schema 快照 → 与期望结构做语义 diff → 跑行为探针」。
+
+请求体新增 `mode`（缺省 `query`，查询判题路径完全不变）：
+
+```json
+{
+  "mode": "schema",
+  "submitted_sql": "CREATE TABLE students (id SERIAL PRIMARY KEY, email VARCHAR(50) NOT NULL UNIQUE);",
+  "timeout": 30,
+  "test_cases": [
+    {
+      "test_input": "",
+      "expected_schema": { "tables": { "students": { "columns": [ "..." ] } } },
+      "probes": [
+        {
+          "sql": "INSERT INTO students (email) VALUES ('a@a.com'); INSERT INTO students (email) VALUES ('a@a.com')",
+          "expect": "error",
+          "error_code": "23505",
+          "description": "唯一约束拒绝重复邮箱"
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `expected_schema`：由 `/introspect` 生成的规范化快照；`test_input` 在 schema 模式下作为可选前置语句（ALTER 类题目使用）。
+- `probes`：行为探针。`expect=ok` 断言语句成功；`expect=error` 可用 `error_code` 进一步断言 SQLSTATE。每条探针用 SAVEPOINT 隔离，因此需要前置数据的探针应写成多语句脚本。
+- 响应 `details[*].checks` 给出逐项检查结果，`actual_output` 是学生实际建出的结构，`error_message` 是失败项摘要。
+
+MVP 的宽松策略：列按名称比较、不要求顺序、额外列/约束不判错；类型按
+`format_type` 规范化（`VARCHAR(50)` 与 `character varying(50)` 等价）；
+`SERIAL` 的 `nextval(...)` 默认值统一为 `serial`。
+
+### 3.4 参考 DDL 内省（/introspect）
+
+教师写一份标准答案 DDL，调用该接口即可得到可直接存入 `expected_schema` 的快照：
+
+```bash
+curl -X POST http://localhost:8080/introspect \
+  -H 'Content-Type: application/json' \
+  -d '{"sql": "CREATE TABLE students (id SERIAL PRIMARY KEY, email VARCHAR(50) NOT NULL UNIQUE);"}'
+```
+
+响应形如 `{"expected_schema": {...}, "error_message": null}`，同样在临时 schema 中执行并回滚，不落任何数据。
+
+---
+
 ## 4. 输出格式说明
 
 ### 4.1 预期输出 (`expected_output`) 格式

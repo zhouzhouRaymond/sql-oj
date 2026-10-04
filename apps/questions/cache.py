@@ -39,10 +39,15 @@ def build_bundle(question_id) -> Optional[Dict[str, Any]]:
     if question is None:
         return None
     cases: List[Dict[str, Any]] = list(
-        question.test_cases.order_by("id").values("test_input", "expected_output")
+        question.test_cases.order_by("id").values(
+            "test_input", "expected_output", "expected_schema", "probes"
+        )
     )
     return {
         "question_id": question.id,
+        "judge_mode": question.judge_mode,
+        "judge_strictness": question.judge_strictness,
+        "judge_compare_names": question.judge_compare_names,
         "create_table_sql": question.create_table_sql or "",
         "test_cases": cases,
     }

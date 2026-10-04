@@ -42,3 +42,28 @@ class QuestionBundleCacheTests(DjangoTestCase):
         with self.assertNumQueries(0):
             bundle = get_bundle(self.question.id)
         self.assertEqual(len(bundle['test_cases']), 1)
+
+    def test_bundle_exposes_schema_mode_fields(self):
+        self.question.judge_mode = 'schema'
+        self.question.judge_strictness = 'exact'
+        self.question.judge_compare_names = True
+        self.question.save(update_fields=[
+            'judge_mode', 'judge_strictness', 'judge_compare_names',
+        ])
+        case = QuestionTestCase.objects.get(question=self.question)
+        case.expected_schema = {'tables': {'t': {'columns': []}}}
+        case.probes = [{'sql': 'INSERT INTO t VALUES (1)', 'expect': 'ok'}]
+        case.save()
+
+        bundle = get_bundle(self.question.id)
+        self.assertEqual(bundle['judge_mode'], 'schema')
+        self.assertEqual(bundle['judge_strictness'], 'exact')
+        self.assertTrue(bundle['judge_compare_names'])
+        self.assertEqual(
+            bundle['test_cases'][0]['expected_schema'],
+            {'tables': {'t': {'columns': []}}},
+        )
+        self.assertEqual(
+            bundle['test_cases'][0]['probes'],
+            [{'sql': 'INSERT INTO t VALUES (1)', 'expect': 'ok'}],
+        )

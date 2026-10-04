@@ -11,7 +11,7 @@ class AnswerSerializer(serializers.ModelSerializer):
 class TestCaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCase
-        fields = ('id', 'test_input', 'expected_output')
+        fields = ('id', 'test_input', 'expected_output', 'expected_schema', 'probes')
 
 
 class QuestionSerializer(serializers.ModelSerializer):
