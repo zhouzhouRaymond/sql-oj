@@ -27,16 +27,13 @@ from .circuit_breaker import JudgeCircuitOpen, judge_breaker
 from .judge import JudgeTransportError, judge_submission_strict
 from .judge_cache import get_cached_result, set_cached_result
 from .result_writer import result_writer
+from .status import CACHEABLE_STATUSES, ERROR, PENDING
 
 logger = logging.getLogger(__name__)
 
 # 判题后台线程数与队列上限，可通过环境变量调整
 JUDGE_WORKERS = int(os.environ.get('JUDGE_WORKERS', '4'))
 JUDGE_QUEUE_SIZE = int(os.environ.get('JUDGE_QUEUE_SIZE', '200'))
-
-# 待判题状态：非该值即视为已出结果
-PENDING = 'PENDING'
-
 
 class JudgeQueueFull(RuntimeError):
     """判题任务队列已满（服务繁忙，可稍后重试）。"""
@@ -125,7 +122,7 @@ def _judge_with_guards(
     judge_breaker.record_success()
     # 只缓存确定性结果（ACCEPTED / WRONG_ANSWER）；判题服务侧 ERROR（如连接池
     # 耗尽、DB 抖动）属瞬时故障，缓存会让相同提交在 TTL 内持续拿到旧错误。
-    if result.get('execution_status') in ('ACCEPTED', 'WRONG_ANSWER'):
+    if result.get('execution_status') in CACHEABLE_STATUSES:
         set_cached_result(question_id, submitted_sql, test_cases, result)
     return result
 
@@ -133,7 +130,7 @@ def _judge_with_guards(
 def _transport_error_result(message: str) -> Dict:
     return {
         "passed": False,
-        "execution_status": "ERROR",
+        "execution_status": ERROR,
         "score": 0,
         "details": [],
         "error_message": message,
@@ -176,7 +173,7 @@ def run_judge_task(submission_id: int) -> None:
             question.id, submission.submitted_sql, test_cases,
             bundle['create_table_sql'],
         )
-        status = result.get('execution_status') or 'ERROR'
+        status = result.get('execution_status') or ERROR
         judge_score = int(result.get('score', 0) or 0)
         # 判题服务只返回「实际输出」，不含用例输入与预期输出，故可安全落库
         judge_details = {
@@ -185,7 +182,7 @@ def run_judge_task(submission_id: int) -> None:
         }
     except Exception:  # noqa: BLE001 - 判题失败统一记为 ERROR
         logger.exception("判题失败 submission_id=%s", submission_id)
-        status, judge_score = 'ERROR', 0
+        status, judge_score = ERROR, 0
         judge_details = {
             'cases': [],
             'error_message': '判题服务异常，请稍后重试',
@@ -215,3 +212,12 @@ def enqueue_judge(submission_id: int) -> None:
         _queue.put_nowait(submission_id)
     except queue.Full:
         raise JudgeQueueFull("判题任务队列已满") from None
+
+
+__all__ = [
+    'JudgeQueueFull',
+    'PENDING',
+    'enqueue_judge',
+    'queue_depth',
+    'run_judge_task',
+]

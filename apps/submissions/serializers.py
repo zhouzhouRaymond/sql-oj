@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Submission
+from .status import ACCEPTED
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -58,7 +59,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
         # 答对（ACCEPTED）时额外返回各用例的实际输出，供前端直接展示运行结果；
         # 未通过时不返回，避免提前泄露隐藏用例对应的结果数据。
         case_outputs = []
-        if obj.execution_status == 'ACCEPTED':
+        if obj.execution_status == ACCEPTED:
             case_outputs = [
                 {'index': idx + 1, 'actual_output': case.get('actual_output') or ''}
                 for idx, case in enumerate(cases)

@@ -13,8 +13,8 @@ import os
 
 from django.core.cache import cache
 
-from .judging import PENDING
 from .normalization import normalize_sql
+from .status import PENDING
 
 
 def _ttl() -> int:
@@ -37,17 +37,19 @@ def remember_submission(idem_key: str, submission_id: int) -> None:
         cache.set(idem_key, submission_id, ttl)
 
 
-def find_duplicate_submission(model, user, question, exam_id, submitted_sql, idem_key):
+def find_duplicate_submission(user, question, exam_id, submitted_sql, idem_key):
     """找出可复用的重复提交：先看窗口内最近一次，再看仍在 PENDING 的相同提交。"""
+    from .models import Submission
+
     ttl = _ttl()
     if ttl > 0:
         cached_id = cache.get(idem_key)
         if cached_id:
-            duplicate = model.objects.filter(id=cached_id).first()
+            duplicate = Submission.objects.filter(id=cached_id).first()
             if duplicate is not None:
                 return duplicate
     return (
-        model.objects.filter(
+        Submission.objects.filter(
             student=user,
             question=question,
             exam_id=exam_id,

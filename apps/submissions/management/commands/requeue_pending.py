@@ -7,8 +7,9 @@
 """
 from django.core.management.base import BaseCommand
 
-from apps.submissions.judging import JudgeQueueFull, PENDING, enqueue_judge
+from apps.submissions.judging import JudgeQueueFull, enqueue_judge
 from apps.submissions.models import Submission
+from apps.submissions.status import PENDING
 
 
 class Command(BaseCommand):
