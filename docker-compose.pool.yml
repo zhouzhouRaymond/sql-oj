@@ -1,0 +1,26 @@
+# 可选覆盖文件：启用「SQL 判题容器预热池」。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.pool.yml up -d --build
+#
+# 启用后，judge-service 通过宿主机 Docker 预先拉起并复用自己的 Postgres 容器
+# （按任务拉起/回收 + cgroup 资源上限 + tmpfs 无状态），未启用时沿用共享 judge-db。
+#
+# ⚠️ 安全提示：挂载 /var/run/docker.sock 等于把宿主机 Docker 控制权交给该容器
+#    （近似 root）。仅建议在可信的开发/内网环境启用。
+services:
+  judge-service:
+    environment:
+      # >0 即启用容器预热池；这里默认预热 2 个、上限 2 个
+      JUDGE_POOL_SIZE: "${JUDGE_POOL_SIZE:-2}"
+      JUDGE_POOL_MAX: "${JUDGE_POOL_MAX:-2}"
+      # 容器运行在宿主机，judge-service 在容器内，需经 host.docker.internal 访问；
+      # 池容器端口发布到 0.0.0.0 才能被网关地址访问
+      JUDGE_POOL_HOST: host.docker.internal
+      JUDGE_POOL_BIND: 0.0.0.0
+      JUDGE_POOL_MEMORY: "${JUDGE_POOL_MEMORY:-512m}"
+      JUDGE_POOL_CPUS: "${JUDGE_POOL_CPUS:-1.0}"
+      JUDGE_POOL_TMPFS_SIZE: "${JUDGE_POOL_TMPFS_SIZE:-256m}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

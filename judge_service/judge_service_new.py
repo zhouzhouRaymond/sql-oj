@@ -17,6 +17,7 @@ from psycopg2.pool import PoolError
 from pydantic import BaseModel, Field
 
 from judge_config import get_int, get_str
+from container_pool import PoolUnavailableError, container_pool
 
 logger = logging.getLogger("judge_service")
 logging.basicConfig(level=logging.INFO)
@@ -32,8 +33,29 @@ DB_POOL_MAX = get_int("JUDGE_DB_POOL_MAX", 20)
 # 常驻（预热）连接数：psycopg2 仅在空闲连接数 < minconn 时复用连接，否则用完即关闭，
 # 导致高并发下反复建连。默认与最大连接数相同，保持连接常驻、省掉重连开销。
 DB_POOL_MIN = get_int("JUDGE_DB_POOL_MIN", DB_POOL_MAX)
+
+
+def _parse_db_targets(raw: str, default_port: int):
+    """解析多 judge-db 目标列表（JUDGE_DB_TARGETS，逗号分隔 host[:port]）。
+
+    未配置时回退到单个 JUDGE_DB_HOST:JUDGE_DB_PORT，保持原有行为。
+    """
+    targets = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        host, _, port = item.partition(":")
+        targets.append((host, int(port) if port.strip() else default_port))
+    return targets or [(DB_HOST, DB_PORT)]
+
+
+# 判题库目标：多个 judge-db 实例做连接分片，聚合 CPU 提升吞吐
+DB_TARGETS = _parse_db_targets(get_str("JUDGE_DB_TARGETS", ""), DB_PORT)
 SQL_TIMEOUT = 30
 MAX_TIMEOUT = 300
+# 单用例 wall-clock 硬超时 = 用例 timeout + 宽限；即便 statement_timeout 未生效也能中断
+CASE_HARD_GRACE = get_int("JUDGE_CASE_HARD_GRACE", 5)
 POLL_INTERVAL = 0.5
 DB_CONNECT_TIMEOUT = get_int("JUDGE_DB_CONNECT_TIMEOUT", 2)  # 单次连接尝试超时（秒）
 CASE_CONCURRENCY = get_int("JUDGE_CASE_CONCURRENCY", 4)  # 单个请求内测试用例的并行度
@@ -48,18 +70,28 @@ db_pool: Optional[Any] = None
 async def lifespan(app: FastAPI):
     # 判题库容器由 docker-compose 创建（见 docker-compose.yml），权限收敛在容器 initdb 脚本完成
     global db_pool
-    wait_for_db(DB_HOST, DB_PORT)
-    db_pool = psycopg2.pool.ThreadedConnectionPool(
-        DB_POOL_MIN, DB_POOL_MAX,
-        host=DB_HOST, port=DB_PORT, database=DB_NAME,
-        user=DB_USER, password=DB_PASSWORD,
-    )
+    for host, port in DB_TARGETS:
+        wait_for_db(host, port)
+    db_pool = MultiDbPool([
+        psycopg2.pool.ThreadedConnectionPool(
+            DB_POOL_MIN, DB_POOL_MAX,
+            host=host, port=port, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        for host, port in DB_TARGETS
+    ])
+    logger.info("判题库连接池已建立：targets=%s", DB_TARGETS)
+    # 可选：启用容器预热池后，SQL 在专用池容器中执行（JUDGE_POOL_SIZE>0）
+    if container_pool is not None:
+        container_pool.start()
     yield
+    if container_pool is not None:
+        container_pool.stop()
     if db_pool is not None:
         db_pool.closeall()
 
 
-app = FastAPI(title="SQL Judge Service", version="2.3.0", lifespan=lifespan)
+app = FastAPI(title="SQL Judge Service", version="2.4.0", lifespan=lifespan)
 
 class TestCase(BaseModel):
     expected_output: str
@@ -155,6 +187,81 @@ def _connect(host: str, port: int, timeout: int):
         host=host, port=port, database=DB_NAME,
         user=DB_USER, password=DB_PASSWORD, connect_timeout=timeout,
     )
+
+
+class MultiDbPool:
+    """多个 judge-db 的连接池集合：按轮询把连接分片到不同实例。
+
+    对外提供与 psycopg2 ThreadedConnectionPool 相同的
+    ``getconn`` / ``putconn(conn, close=...)`` / ``closeall`` 接口，
+    因此 ``_acquire_connection`` 与各调用方无需改动即可支持多实例。
+    """
+
+    def __init__(self, pools: List[Any]):
+        self._pools = list(pools)
+        self._lock = threading.Lock()
+        self._owner: Dict[int, Any] = {}
+        self._counter = 0
+
+    def getconn(self):
+        size = len(self._pools)
+        with self._lock:
+            start = self._counter
+            self._counter = (self._counter + 1) % size
+        # 从轮询起点开始，逐个尝试；某实例繁忙则试下一个
+        for offset in range(size):
+            pool = self._pools[(start + offset) % size]
+            try:
+                conn = pool.getconn()
+            except PoolError:
+                continue
+            with self._lock:
+                self._owner[id(conn)] = pool
+            return conn
+        raise PoolError("所有判题库连接池均繁忙")
+
+    def putconn(self, conn, close: bool = False) -> None:
+        with self._lock:
+            pool = self._owner.pop(id(conn), None)
+        if pool is None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 - 未知来源连接直接关闭
+                pass
+            return
+        pool.putconn(conn, close=close)
+
+    def closeall(self) -> None:
+        for pool in self._pools:
+            pool.closeall()
+
+
+class SharedConnectionProvider:
+    """默认模式：从共享 judge-db 连接池取连接。"""
+
+    def acquire(self):
+        return _acquire_connection()
+
+    def release(self, conn, close: bool = False) -> None:
+        db_pool.putconn(conn, close=close)
+
+
+class ContainerConnectionProvider:
+    """池模式：连接任务专属容器，每个用例独立连接、用完即关。"""
+
+    def __init__(self, container):
+        self._container = container
+
+    def acquire(self):
+        return psycopg2.connect(
+            connect_timeout=DB_CONNECT_TIMEOUT, **self._container.connect_kwargs()
+        )
+
+    def release(self, conn, close: bool = False) -> None:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001 - 关闭失败忽略
+            pass
 
 
 class PoolExhaustedError(RuntimeError):
@@ -323,8 +430,37 @@ def _execute_case(cur, submitted_sql: str, idx: int, tc: TestCase) -> TestCaseRe
         )
 
 
+class _HardCancelTimer:
+    """单个用例的 wall-clock 硬超时。
+
+    到点后调用 ``conn.cancel()`` 请求服务端中断当前查询（覆盖
+    ``statement_timeout`` 未覆盖的连接/协议层卡顿）。到点取消后，
+    执行线程会收到 QueryCanceled，按「SQL 执行超时」处理。
+    """
+
+    def __init__(self, conn, timeout_seconds: float):
+        self._conn = conn
+        self._timeout = max(1.0, float(timeout_seconds))
+        self._timer: Optional[threading.Timer] = None
+
+    def start(self) -> None:
+        self._timer = threading.Timer(self._timeout, self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _fire(self) -> None:
+        try:
+            self._conn.cancel()
+        except Exception:  # noqa: BLE001 - 取消失败只记录，不抛出
+            logger.warning("硬超时取消查询失败", exc_info=True)
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+
+
 def _run_single_case(
-    request: JudgeRequest, idx: int, tc: TestCase
+    request: JudgeRequest, idx: int, tc: TestCase, provider
 ) -> Tuple[Optional[TestCaseResult], Optional[str]]:
     """在独立连接 + 独立临时 schema 中执行单个用例，结束后整体回滚清空。
 
@@ -332,7 +468,10 @@ def _run_single_case(
     返回 ``(result, setup_error)``：建表阶段出错时返回 ``(None, 错误信息)``。
     """
     schema = sql.Identifier(f"judge_{uuid4().hex[:12]}")
-    conn = _acquire_connection()
+    conn = provider.acquire()
+    # 硬超时兜底：wall-clock 到点即向服务端发取消，避免查询卡死占用连接
+    hard_cancel = _HardCancelTimer(conn, request.timeout + CASE_HARD_GRACE)
+    hard_cancel.start()
     result: Optional[TestCaseResult] = None
     setup_error: Optional[str] = None
     try:
@@ -340,7 +479,13 @@ def _run_single_case(
         try:
             with conn.cursor() as cur:
                 # SET LOCAL 仅作用于当前事务，回滚后自动失效，不会污染连接池中复用的连接
-                cur.execute(f"SET LOCAL statement_timeout = {int(request.timeout) * 1000}")
+                timeout_ms = int(request.timeout) * 1000
+                cur.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
+                # 持锁等待与空闲事务同样受限，避免长事务拖垮复用的连接
+                cur.execute(f"SET LOCAL lock_timeout = {timeout_ms}")
+                cur.execute(
+                    f"SET LOCAL idle_in_transaction_session_timeout = {timeout_ms}"
+                )
                 cur.execute(sql.SQL("CREATE SCHEMA {}").format(schema))
                 # search_path 只指向本用例的 schema，未限定名称的建表/查询不会落到 public
                 cur.execute(sql.SQL("SET LOCAL search_path = {}").format(schema))
@@ -359,16 +504,20 @@ def _run_single_case(
     except Exception:
         # 连接/事务异常：关闭该连接换新，避免把坏连接放回池中
         try:
-            db_pool.putconn(conn, close=True)
+            hard_cancel.cancel()
+            provider.release(conn, close=True)
         except Exception:
             logger.exception("关闭异常连接失败")
         raise
     else:
-        db_pool.putconn(conn)
+        hard_cancel.cancel()
+        provider.release(conn)
     return result, setup_error
 
 
-def _run_judge_in_schema(request: JudgeRequest) -> Tuple[List[TestCaseResult], Optional[str]]:
+def _run_judge_in_schema(
+    request: JudgeRequest, provider
+) -> Tuple[List[TestCaseResult], Optional[str]]:
     """每个用例在独立连接 + 独立临时 schema 中执行，可按 ``CASE_CONCURRENCY`` 并行。
 
     返回 (details, fatal_error)：
@@ -380,9 +529,11 @@ def _run_judge_in_schema(request: JudgeRequest) -> Tuple[List[TestCaseResult], O
     if workers > 1:
         # 用例间相互独立（各用各的 schema/连接），并行执行以降低整体响应时间
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="judge-case") as pool:
-            outcomes = list(pool.map(lambda item: _run_single_case(request, *item), cases))
+            outcomes = list(
+                pool.map(lambda item: _run_single_case(request, *item, provider), cases)
+            )
     else:
-        outcomes = [_run_single_case(request, idx, tc) for idx, tc in cases]
+        outcomes = [_run_single_case(request, idx, tc, provider) for idx, tc in cases]
 
     # create_table_sql 对全部用例一致：若全部在建表阶段失败，视为致命错误
     if all(setup_error is not None for _, setup_error in outcomes):
@@ -396,6 +547,34 @@ def _run_judge_in_schema(request: JudgeRequest) -> Tuple[List[TestCaseResult], O
             )
         details.append(result)
     return details, None
+
+
+def _run_judge(
+    request: JudgeRequest,
+) -> Tuple[List[TestCaseResult], Optional[str]]:
+    """按是否启用容器池选择执行后端。
+
+    - 未启用池：走共享 judge-db（默认，行为不变）；
+    - 启用池：取一个预热容器执行，正常则清理复用，异常/超时则 kill 补建。
+    """
+    if container_pool is None:
+        return _run_judge_in_schema(request, SharedConnectionProvider())
+
+    try:
+        container = container_pool.acquire()
+    except PoolUnavailableError as exc:
+        # 池繁忙/不可用：按「服务繁忙」返回，与连接池耗尽同语义
+        raise PoolExhaustedError(str(exc)) from None
+
+    healthy = True
+    try:
+        return _run_judge_in_schema(request, ContainerConnectionProvider(container))
+    except Exception:
+        # 任务异常/超时：容器可能处于不确定状态，交由池 kill 并补建
+        healthy = False
+        raise
+    finally:
+        container_pool.release(container, healthy=healthy)
 
 
 def format_result_set(result: ResultSet) -> str:
@@ -427,7 +606,7 @@ def _error_response(error_message: Optional[str] = None) -> JudgeResponse:
 def judge(request: JudgeRequest) -> JudgeResponse:
     # 同步 def：内部为阻塞式 I/O（psycopg2），由 FastAPI 放入线程池运行，避免阻塞事件循环
     try:
-        details, fatal_error = _run_judge_in_schema(request)
+        details, fatal_error = _run_judge(request)
         if fatal_error:
             # 建表等 SQL 层致命错误：附带原因返回并记录日志，便于上层定位（原先该信息被丢弃）
             logger.warning("判题未能执行: %s", fatal_error)
@@ -450,6 +629,14 @@ def judge(request: JudgeRequest) -> JudgeResponse:
     except Exception:
         logger.exception("判题失败")
         return _error_response()
+
+
+@app.get("/pool")
+def pool_status():
+    """容器池状态（监控：容器复用率 / 就绪数）。未启用时返回 enabled=False。"""
+    if container_pool is None:
+        return {"enabled": False}
+    return {"enabled": True, **container_pool.stats()}
 
 
 @app.get("/health")

@@ -4,3 +4,5 @@ psycopg2-binary==2.9.10
 pydantic==2.9.0
 requests==2.32.3
 python-dotenv==1.2.2
+# 容器预热池：通过 Docker SDK 访问宿主机 Docker（无需 docker CLI）
+docker>=7.0

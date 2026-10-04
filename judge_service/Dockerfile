@@ -23,5 +23,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD python -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).status == 200 else 1)"
 
-# judge_service_new.py 内部以 0.0.0.0:8080 启动 uvicorn
-CMD ["python", "judge_service_new.py"]
+# 多进程 uvicorn：每个 worker 独立进程（独立 GIL / 线程池），配合 cpu_quota 用满多核。
+# worker 数用 JUDGE_UVICORN_WORKERS 调整（默认 4）；容器池模式请设为 1（见 container_pool.py）。
+CMD ["sh", "-c", "uvicorn judge_service_new:app --host 0.0.0.0 --port 8080 --workers ${JUDGE_UVICORN_WORKERS:-4}"]
