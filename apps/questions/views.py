@@ -1,5 +1,5 @@
 import requests
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,6 +9,7 @@ from apps.submissions.judge import (
     judge_service_base_url,
     judge_service_headers,
 )
+from apps.submissions.status import ACCEPTED
 from apps.users.permissions import IsTeacher
 
 from .models import Answer, Question, TestCase
@@ -43,6 +44,30 @@ class QuestionViewSet(viewsets.ModelViewSet):
         if getattr(self.request.user, 'user_type', None) == 'student':
             qs = qs.filter(is_visible=True)
         else:
+            # 教师端附上历史表现聚合：一次查询算完当前页每题的通过率与难度建议，
+            # 只统计学生提交，教师试做不参与。
+            student_submission = Q(submissions__student__user_type='student')
+            qs = qs.annotate(
+                total_submissions=Count(
+                    'submissions', filter=student_submission, distinct=True
+                ),
+                accepted_submissions=Count(
+                    'submissions',
+                    filter=student_submission & Q(submissions__execution_status=ACCEPTED),
+                    distinct=True,
+                ),
+                attempted_students=Count(
+                    'submissions__student', filter=student_submission, distinct=True
+                ),
+                passed_students=Count(
+                    'submissions__student',
+                    filter=student_submission & Q(submissions__execution_status=ACCEPTED),
+                    distinct=True,
+                ),
+            )
+            # annotate() 会设置 GROUP BY，使 Django 认为查询集无序；显式恢复默认排序，
+            # 避免分页时出现 UnorderedObjectListWarning（OrderingFilter 仍可覆盖）。
+            qs = qs.order_by(*Question._meta.ordering)
             visible = self.request.query_params.get('is_visible')
             if visible in ('true', 'false'):
                 qs = qs.filter(is_visible=(visible == 'true'))

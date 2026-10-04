@@ -22,13 +22,85 @@
         <el-input v-model="form.description" type="textarea" :rows="4" placeholder="请输入完整题目描述（支持 Markdown 格式）" />
       </el-form-item>
 
+      <!-- 历史表现：编辑已有题目时展示真实学生的通过率，并据此给出难度建议 -->
+      <el-form-item v-if="isEdit" label="历史表现">
+        <div v-if="history && history.attempted_students > 0" class="history-panel">
+          <el-progress
+            type="circle"
+            :percentage="historyPercent"
+            :width="96"
+            :stroke-width="9"
+            :color="historyColor"
+          >
+            <template #default="{ percentage }">
+              <div class="ring-inner">
+                <span class="ring-num">{{ percentage }}%</span>
+                <span class="ring-label">学生通过率</span>
+              </div>
+            </template>
+          </el-progress>
+
+          <div class="history-body">
+            <div class="history-stats">
+              <el-statistic title="尝试学生" :value="history.attempted_students" />
+              <el-statistic title="通过学生" :value="history.passed_students" />
+              <el-statistic title="提交次数" :value="history.total_submissions" />
+            </div>
+
+            <div v-if="history.recommended_difficulty" class="history-suggest">
+              <span class="suggest-label">建议难度</span>
+              <el-tag
+                :type="difficultyTagType(history.recommended_difficulty)"
+                effect="dark"
+                round
+                size="large"
+              >
+                {{ difficultyText(history.recommended_difficulty) }}
+              </el-tag>
+              <el-button
+                v-if="history.recommended_difficulty !== form.difficulty"
+                type="primary"
+                size="small"
+                round
+                @click="applyRecommendedDifficulty"
+              >
+                应用建议
+              </el-button>
+              <span v-else class="applied-hint">✓ 与当前难度一致</span>
+            </div>
+
+            <div class="history-reason">{{ history.reason }}</div>
+          </div>
+        </div>
+        <el-empty
+          v-else
+          description="还没有学生提交记录，暂时无法给出难度建议"
+          :image-size="60"
+        />
+      </el-form-item>
+
       <!-- 难度 -->
       <el-form-item label="难度" required>
         <el-radio-group v-model="form.difficulty">
-          <el-radio value="easy">简单</el-radio>
-          <el-radio value="medium">中等</el-radio>
-          <el-radio value="hard">困难</el-radio>
+          <el-radio v-for="opt in DIFFICULTY_OPTIONS" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+            <el-tag
+              v-if="history?.recommended_difficulty === opt.value"
+              class="rec-badge"
+              type="primary"
+              size="small"
+              effect="light"
+              round
+            >
+              建议
+            </el-tag>
+          </el-radio>
         </el-radio-group>
+        <div v-if="history?.recommended_difficulty" class="input-hint">
+          依据 {{ history.attempted_students }} 名学生的历史通过率，建议设为「{{
+            difficultyText(history.recommended_difficulty)
+          }}」
+        </div>
       </el-form-item>
 
       <!-- 判题模式：query=查询结果，schema=DDL 结构判题 -->
@@ -199,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -210,6 +282,7 @@ import {
 } from '../../api/questions'
 import { DDL_TEMPLATES } from '../../constants/ddlTemplates'
 import SqlEditor from '../../components/SqlEditor.vue'
+import type { QuestionHistory } from '../../types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -240,6 +313,52 @@ const form = ref({
   // 答题失败时是否向学生展示用例的「测试输入 / 预期输出」（默认关闭）
   show_case_details: false
 })
+
+// 历史表现（仅编辑已有题目时由后端返回）
+const history = ref<QuestionHistory | null>(null)
+
+const DIFFICULTY_OPTIONS = [
+  { value: 'easy', label: '简单' },
+  { value: 'medium', label: '中等' },
+  { value: 'hard', label: '困难' },
+] as const
+
+const historyPercent = computed(
+  () => Math.round((history.value?.student_pass_rate || 0) * 100),
+)
+
+// 与列表页保持一致的通过率配色：>=80% 绿、>=40% 琥珀、其余红
+const historyColor = computed(() => {
+  if (historyPercent.value >= 80) return '#10b981'
+  if (historyPercent.value >= 40) return '#f59e0b'
+  return '#ef4444'
+})
+
+const difficultyText = (difficulty: string) => {
+  switch (difficulty) {
+    case 'easy': return '简单'
+    case 'medium': return '中等'
+    case 'hard': return '困难'
+    default: return difficulty
+  }
+}
+
+const difficultyTagType = (difficulty: string) => {
+  switch (difficulty) {
+    case 'easy': return 'success'
+    case 'medium': return 'warning'
+    case 'hard': return 'danger'
+    default: return 'info'
+  }
+}
+
+// 一键采用建议难度（仍需点击「提交」才会保存）
+const applyRecommendedDifficulty = () => {
+  const recommended = history.value?.recommended_difficulty
+  if (!recommended) return
+  form.value.difficulty = recommended
+  ElMessage.success(`已采用建议难度「${difficultyText(recommended)}」，保存后生效 ✅`)
+}
 
 // ✅ 添加测试用例
 const addTestCase = () => {
@@ -299,6 +418,7 @@ const loadQuestion = async (id: number) => {
   try {
     const res = await getQuestionDetail(id)
     const data = res.data
+    history.value = data.history || null
     form.value = {
       title: data.title || '',
       description: data.description || '',
@@ -485,6 +605,78 @@ onMounted(() => {
   flex: 1;
 }
 
+/* ===== 历史表现 / 难度建议 ===== */
+.history-panel {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  padding: 18px 22px;
+  border-radius: 14px;
+  border: 1px solid #e6e8f0;
+  background: linear-gradient(135deg, #f8faff 0%, #f3f7ff 100%);
+}
+.history-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-stats {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.history-stats :deep(.el-statistic__head) {
+  font-size: 12px;
+  color: #8a94a6;
+  margin-bottom: 2px;
+}
+.history-stats :deep(.el-statistic__content) {
+  font-size: 20px;
+  font-weight: 600;
+  color: #2d3748;
+}
+.history-suggest {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.suggest-label {
+  font-size: 13px;
+  color: #6b7280;
+}
+.applied-hint {
+  font-size: 13px;
+  color: #10b981;
+  font-weight: 500;
+}
+.history-reason {
+  font-size: 12px;
+  color: #8a94a6;
+  line-height: 1.6;
+}
+.ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ring-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: #2d3748;
+}
+.ring-label {
+  font-size: 11px;
+  color: #8a94a6;
+}
+.rec-badge {
+  margin-left: 6px;
+}
+
 /* ===== 窄窗口自适应 ===== */
 @media (max-width: 768px) {
   .create-container {
@@ -500,6 +692,10 @@ onMounted(() => {
   }
   .test-case-row {
     flex-direction: column;
+  }
+  .history-panel {
+    flex-direction: column;
+    align-items: flex-start;
   }
   /* 标签置顶：避免窄屏下输入框被 120px 宽的标签挤扁 */
   .create-container :deep(.el-form-item) {

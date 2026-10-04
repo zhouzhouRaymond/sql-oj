@@ -19,6 +19,21 @@ export interface Question {
   create_table_sql: string
 }
 
+// 题目历史表现（仅教师端返回）：通过率与基于通过率推断的难度建议
+export interface QuestionHistory {
+  total_submissions: number
+  accepted_submissions: number
+  attempted_students: number
+  passed_students: number
+  // 提交通过率（ACCEPTED 提交 / 总提交），0~1
+  pass_rate: number
+  // 学生通过率（至少通过一次的学生 / 尝试过的学生），0~1，难度建议以此为准
+  student_pass_rate: number
+  recommended_difficulty: 'easy' | 'medium' | 'hard' | null
+  confidence: 'none' | 'low' | 'medium' | 'high'
+  reason: string
+}
+
 // 提交相关类型
 export interface Submission {
   id: number

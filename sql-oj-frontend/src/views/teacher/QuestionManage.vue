@@ -30,6 +30,60 @@
           </el-tag>
         </template>
       </el-table-column>
+      <!-- 历史通过率：来自真实学生提交，帮助教师判断题目实际难度 -->
+      <el-table-column label="历史通过率" min-width="210">
+        <template #default="{ row }">
+          <div v-if="hasHistory(row)" class="pass-rate-cell">
+            <el-tooltip placement="top" :content="passRateTooltip(row.history)">
+              <el-progress
+                :percentage="passRatePercent(row.history)"
+                :stroke-width="7"
+                :color="passRateColor(row.history.student_pass_rate)"
+                :format="formatPercent"
+              />
+            </el-tooltip>
+            <div class="pass-rate-meta">
+              {{ row.history.passed_students }}/{{ row.history.attempted_students }} 人通过 ·
+              {{ row.history.total_submissions }} 次提交
+            </div>
+          </div>
+          <span v-else class="muted">暂无学生提交</span>
+        </template>
+      </el-table-column>
+      <!-- 难度建议：样本足够且与当前难度不一致时可一键应用 -->
+      <el-table-column label="建议难度" min-width="200">
+        <template #default="{ row }">
+          <div v-if="row.history?.recommended_difficulty" class="suggest-cell">
+            <el-tooltip placement="top" :content="recommendTooltip(row.history)">
+              <el-tag
+                :type="difficultyTagType(row.history.recommended_difficulty)"
+                effect="light"
+                round
+              >
+                建议{{ difficultyText(row.history.recommended_difficulty) }}
+              </el-tag>
+            </el-tooltip>
+            <el-button
+              v-if="row.history.recommended_difficulty !== row.difficulty"
+              type="primary"
+              link
+              size="small"
+              :loading="savingDifficulty.includes(row.id)"
+              @click="applyRecommendation(row)"
+            >
+              应用
+            </el-button>
+            <span v-else class="muted">与当前一致</span>
+          </div>
+          <el-tooltip
+            v-else
+            placement="top"
+            :content="row.history?.reason || '暂无学生提交'"
+          >
+            <span class="muted">样本不足</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <!-- 教师可控制该题是否对学生公开：关闭后学生题库里看不到、也打不开 -->
       <el-table-column label="学生可见" width="130">
         <template #default="{ row }">
@@ -162,6 +216,58 @@ const difficultyText = (difficulty: string) => {
     case 'medium': return '中等'
     case 'hard': return '困难'
     default: return difficulty
+  }
+}
+
+// 正在按建议修改难度的题目 id（保存期间禁用按钮，避免重复提交）
+const savingDifficulty = ref<number[]>([])
+
+// 是否已有学生提交：没有提交就只显示占位文案
+const hasHistory = (row: any) =>
+  Boolean(row.history && row.history.attempted_students > 0)
+
+const formatPercent = (percentage: number) => `${percentage}%`
+
+const passRatePercent = (history: any) =>
+  Math.round((history?.student_pass_rate || 0) * 100)
+
+// 通过率配色：>=80% 绿、>=40% 琥珀、其余红，与难度建议阈值保持一致
+const passRateColor = (rate: number) => {
+  if (rate >= 0.8) return '#10b981'
+  if (rate >= 0.4) return '#f59e0b'
+  return '#ef4444'
+}
+
+const passRateTooltip = (history: any) =>
+  `学生通过率 ${passRatePercent(history)}%：${history.passed_students} 人通过 / ` +
+  `${history.attempted_students} 人尝试；提交通过率 ` +
+  `${Math.round((history.pass_rate || 0) * 100)}%（` +
+  `${history.accepted_submissions}/${history.total_submissions}）`
+
+const confidenceText = (confidence: string) => {
+  switch (confidence) {
+    case 'high': return '样本充分'
+    case 'medium': return '样本一般'
+    default: return '样本偏少'
+  }
+}
+
+const recommendTooltip = (history: any) =>
+  `${history.reason}（${confidenceText(history.confidence)}）`
+
+// 一键采用建议难度
+const applyRecommendation = async (row: any) => {
+  const next = row.history?.recommended_difficulty
+  if (!next || next === row.difficulty) return
+  savingDifficulty.value = [...savingDifficulty.value, row.id]
+  try {
+    await patchQuestion(row.id, { difficulty: next })
+    row.difficulty = next
+    ElMessage.success(`已将难度更新为「${difficultyText(next)}」✅`)
+  } catch (error) {
+    ElMessage.error('应用建议失败，请重试')
+  } finally {
+    savingDifficulty.value = savingDifficulty.value.filter((id) => id !== row.id)
   }
 }
 
@@ -383,6 +489,33 @@ onUnmounted(() => {
 /* 已对学生隐藏的题目：标题弱化显示 */
 .title-hidden {
   color: #a8abb2;
+}
+
+/* ===== 历史通过率 / 难度建议 ===== */
+.pass-rate-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 170px;
+}
+.pass-rate-cell :deep(.el-progress__text) {
+  font-size: 12px !important;
+  min-width: 38px;
+}
+.pass-rate-meta {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+}
+.suggest-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.muted {
+  color: #a8abb2;
+  font-size: 13px;
 }
 
 /* ===== 窄窗口自适应 ===== */
