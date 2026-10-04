@@ -7,6 +7,52 @@
 # 可选的变量覆盖放在根目录 .env（由 compose 自动加载，示例见 .env.example）。
 name: sql-oj
 
+# 判题数据库的共享定义：judge-db / judge-db-2 ... 复用同一份配置（YAML 锚点）。
+# 多实例配合 JUDGE_DB_TARGETS 使用：judge-service 按连接分片，聚合 CPU 提升吞吐。
+x-judge-db-config: &judge-db-config
+  image: postgres:15-alpine
+  environment:
+    POSTGRES_DB: ${JUDGE_DB_NAME:-judge_db}
+    POSTGRES_USER: ${JUDGE_DB_USER:-judge_user}
+    POSTGRES_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
+  volumes:
+    # 挂载初始化脚本：每次重建（tmpfs）都会执行，完成权限收敛与 public 隔离
+    - ./judge_service/initdb:/docker-entrypoint-initdb.d:ro
+  tmpfs:
+    # 数据目录给足空间：PostgreSQL 默认 max_wal_size=1GB，判题的建表/回滚会产生大量 WAL，
+    # 256MB 时持续压测会把 tmpfs 写满（could not write to file "pg_wal/..."），
+    # 数据库随即崩溃重启、连接被污染，表现为判题批量 ERROR。故放宽到 1GB。
+    - /var/lib/postgresql/data:rw,noexec,nosuid,size=1g
+    - /var/run/postgresql:rw,noexec,nosuid,size=16m
+    - /tmp:rw,noexec,nosuid,size=64m
+    - /dev/shm:rw,noexec,nosuid,size=64m
+  # 资源上限：CPU 2 核 / 内存 1G / 进程数 64（多实例时总容量 ≈ 实例数 × 2 核）。
+  # 用 judge_service/load_test.py 压测可知判题吞吐由本容器的 CPU 配额决定。
+  mem_limit: 1g
+  cpu_period: 100000
+  cpu_quota: 200000
+  pids_limit: 64
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+    - DAC_OVERRIDE
+  cap_drop:
+    - SYS_ADMIN
+    - NET_RAW
+    - SYS_MODULE
+    - AUDIT_WRITE
+    - MKNOD
+  security_opt:
+    - no-new-privileges:true
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${JUDGE_DB_USER:-judge_user} -d ${JUDGE_DB_NAME:-judge_db}"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+    start_period: 5s
+  restart: unless-stopped
+
 services:
   # ---------- 业务数据库（MySQL） ----------
   mysql:
@@ -31,51 +77,14 @@ services:
 
   # ---------- 判题数据库（PostgreSQL，容器重建即重置，权限收敛见 initdb） ----------
   judge-db:
-    image: postgres:15-alpine
+    <<: *judge-db-config
     container_name: sql-oj-judge-db
-    environment:
-      POSTGRES_DB: ${JUDGE_DB_NAME:-judge_db}
-      POSTGRES_USER: ${JUDGE_DB_USER:-judge_user}
-      POSTGRES_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
-    volumes:
-      # 挂载初始化脚本：每次重建（tmpfs）都会执行，完成权限收敛与 public 隔离
-      - ./judge_service/initdb:/docker-entrypoint-initdb.d:ro
-    tmpfs:
-      # 数据目录给足空间：PostgreSQL 默认 max_wal_size=1GB，判题的建表/回滚会产生大量 WAL，
-      # 256MB 时持续压测会把 tmpfs 写满（could not write to file "pg_wal/..."），
-      # 数据库随即崩溃重启、连接被污染，表现为判题批量 ERROR。故放宽到 1GB。
-      - /var/lib/postgresql/data:rw,noexec,nosuid,size=1g
-      - /var/run/postgresql:rw,noexec,nosuid,size=16m
-      - /tmp:rw,noexec,nosuid,size=64m
-      - /dev/shm:rw,noexec,nosuid,size=64m
-    # 资源上限：CPU 2 核 / 内存 1G / 进程数 64。
-    # 用 judge_service/load_test.py 压测可知判题吞吐由本容器的 CPU 配额决定：
-    # 0.5 核时轻用例封顶约 110 req/s 且并发无收益（加大并发只涨延迟），
-    # 放宽到 2 核后按「0.5 核 ÷ 单请求 DB CPU」模型吞吐约提升 4 倍。
-    mem_limit: 1g
-    cpu_period: 100000
-    cpu_quota: 200000
-    pids_limit: 64
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-    cap_drop:
-      - SYS_ADMIN
-      - NET_RAW
-      - SYS_MODULE
-      - AUDIT_WRITE
-      - MKNOD
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${JUDGE_DB_USER:-judge_user} -d ${JUDGE_DB_NAME:-judge_db}"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-      start_period: 5s
-    restart: unless-stopped
+
+  # 第二个判题库实例：与 judge-db 组成多实例，judge-service 按连接分片。
+  # 需要更多实例时复制本段（改 container_name）并追加进 JUDGE_DB_TARGETS。
+  judge-db-2:
+    <<: *judge-db-config
+    container_name: sql-oj-judge-db-2
 
   # ---------- 判题服务（FastAPI，容器内 8080） ----------
   judge-service:
@@ -92,14 +101,44 @@ services:
       JUDGE_DB_NAME: ${JUDGE_DB_NAME:-judge_db}
       JUDGE_DB_USER: ${JUDGE_DB_USER:-judge_user}
       JUDGE_DB_PASSWORD: ${JUDGE_DB_PASSWORD:-judge_pass}
+      # 多判题库实例：judge-service 按连接分片到这些实例（逗号分隔 host:port）
+      JUDGE_DB_TARGETS: "judge-db:5432,judge-db-2:5432"
+      # 多进程 uvicorn worker 数（每个 worker 独立 GIL / 线程池，配合 cpu_quota 用满多核）
+      JUDGE_UVICORN_WORKERS: "4"
+      # 每 worker、每判题库实例的连接池大小：
+      # 4 worker × 2 实例 × 8 = 64 连接，折算每库 32，低于 PostgreSQL max_connections(100)
+      JUDGE_DB_POOL_MAX: "8"
+      JUDGE_DB_POOL_MIN: "8"
     depends_on:
       judge-db:
         condition: service_healthy
+      judge-db-2:
+        condition: service_healthy
     ports:
       - "8080:8080"
+    # 资源上限：判题服务承担请求编排/结果比对/序列化，是判题链路的 CPU 热点，
+    # 实测 1 核会被打满（并发再高只涨延迟），因此按判题库实例数给到 4 核。
+    # 注意：判题服务与判题库都要有 CPU，单方面扩容无效。
+    mem_limit: 512m
+    cpu_period: 100000
+    cpu_quota: 400000
+    pids_limit: 256
     restart: unless-stopped
 
   # ---------- 后端（Django + DRF，容器内 8000） ----------
+  # ---------- 消息队列（Redis）：判题任务队列 + 跨进程缓存 ----------
+  redis:
+    image: redis:7-alpine
+    container_name: sql-oj-redis
+    # 开启 AOF：Redis 重启后队列不丢；仍可用 requeue_pending 兜底
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -112,6 +151,9 @@ services:
       MYSQL_USER: root
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sql_oj}
       JUDGE_SERVICE_URL: http://judge-service:8080/judge
+      # 提交只写入 Redis 队列，由独立 judge-worker 消费（不再占用 Web 进程）
+      JUDGE_QUEUE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
       DJANGO_DEBUG: "True"
       DJANGO_ALLOWED_HOSTS: "*"
       # DJANGO_SECRET_KEY: 生产环境请通过 .env 显式设置
@@ -121,11 +163,50 @@ services:
       # 判题服务带 HEALTHCHECK（探测 /health），这里等它真正可接单再启动后端
       judge-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     restart: unless-stopped
 
   # ---------- 前端（Nginx 托管构建产物并反代 /api，容器内 80） ----------
+  # ---------- 判题 Worker：消费 Redis 队列（可 --scale 水平扩展）----------
+  judge-worker:
+    build:
+      context: .
+    image: sql-oj-backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sql_oj_db}
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-sql_oj}
+      JUDGE_SERVICE_URL: http://judge-service:8080/judge
+      JUDGE_QUEUE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      # 该容器只跑判题 Worker，不启动 Web 服务
+      JUDGE_ROLE: worker
+      JUDGE_WORKER_COUNT: "4"
+    depends_on:
+      # 等 Web 服务健康（迁移已执行完）再消费，避免并发迁移
+      backend:
+        condition: service_healthy
+      judge-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./sql-oj-frontend
