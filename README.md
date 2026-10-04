@@ -661,7 +661,7 @@ A: 尚未创建数据库。先在 MySQL 中执行 `CREATE DATABASE sql_oj_db DEF
 
 **Q: 提交 SQL 后返回 ERROR 或无响应**
 
-A: 检查判题服务是否正在运行（http://localhost:8080/health），以及 Docker Desktop 是否已启动。
+A: 检查判题服务是否正在运行（`docker compose exec judge-service python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read())"`），以及 Docker Desktop 是否已启动。
 
 **Q: 前端页面无法调用后端接口**
 
@@ -710,20 +710,21 @@ docker compose up -d --build
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | 前端页面 | http://localhost:8090 | Nginx 托管前端构建产物 |
-| 后端 API | http://localhost:8000/api/ | Django + DRF（可直接浏览测试） |
-| 判题服务 | http://localhost:8080/health | FastAPI 判题引擎健康检查 |
+| 后端 API | http://localhost:8090/api/ | Django + DRF（经前端 Nginx 反代，容器内 8000 不对外发布） |
+| 判题服务 | 仅容器网络 | FastAPI 判题引擎，不发布宿主端口，仅 `backend` / `judge-worker` 调用 |
 
 ### 11.3 各服务说明
 
 | 容器 | 镜像/构建 | 端口映射 | 说明 |
 |------|-----------|----------|------|
 | sql-oj-frontend | 由 `sql-oj-frontend/Dockerfile` 构建 | 8090 → 80 | Node 构建产物 + Nginx，反代 `/api`、`/admin` 到后端 |
-| sql-oj-backend | 由根目录 `Dockerfile` 构建 | 8000 → 8000 | 入口脚本等待 MySQL、执行迁移后启动 Django |
-| sql-oj-judge-service | 由 `judge_service/Dockerfile` 构建 | 8080 → 8080 | FastAPI 判题服务 |
+| sql-oj-backend | 由根目录 `Dockerfile` 构建 | 仅容器网络 | 入口脚本等待 MySQL、执行迁移后启动 Django |
+| sql-oj-judge-service | 由 `judge_service/Dockerfile` 构建 | 仅容器网络 | FastAPI 判题服务，需携带 `X-Judge-Token` 调用 |
 | sql-oj-judge-db | postgres:15-alpine | 仅容器网络 | 判题数据库（tmpfs，容器重建即重置） |
 | sql-oj-mysql | mysql:8.4 | 仅容器网络 | 业务数据库（数据持久化在 mysql-data 卷；Django 6.x 要求 MySQL ≥ 8.4） |
 
 容器间通过服务名互相访问：前端 Nginx → `backend:8000`，后端 → `judge-service:8080`，判题服务 → `judge-db:5432`，后端 → `mysql:3306`。
+后端与判题服务共享 `JUDGE_SERVICE_TOKEN`：判题服务校验每个 `/judge`、`/introspect`、`/pool` 请求的 `X-Judge-Token` 头，未配置时仅在本地调试模式下放行并打印告警。
 
 ### 11.4 配置项
 
@@ -738,6 +739,7 @@ copy .env.example .env
 | `MYSQL_DATABASE` | `sql_oj_db` | 业务数据库名 |
 | `MYSQL_ROOT_PASSWORD` | `sql_oj` | MySQL root 密码（后端同样使用） |
 | `JUDGE_DB_NAME` / `JUDGE_DB_USER` / `JUDGE_DB_PASSWORD` | `judge_db` / `judge_user` / `judge_pass` | 判题数据库 |
+| `JUDGE_SERVICE_TOKEN` | `judge_service_dev_token` | 后端 ↔ 判题服务的共享令牌，生产环境务必替换为随机值 |
 | `DJANGO_SECRET_KEY` | 内置开发密钥 | 生产环境请替换 |
 | `DJANGO_DEBUG` | `True` | 生产环境建议设为 `False` |
 | `DJANGO_ALLOWED_HOSTS` | `*` | 逗号分隔 |
@@ -813,7 +815,7 @@ docker compose up -d        # 镜像已就绪，不会重新构建
 
 ```bash
 docker image inspect sql-oj-backend --format '{{.Os}}/{{.Architecture}}'   # 应输出 linux/arm64
-curl http://localhost:8080/health
+docker compose exec judge-service python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read())"
 ```
 
 ### 12.3 说明
