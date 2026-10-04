@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import StatsViewSet
+from .views_stats import StatsViewSet
 
 stats_router = DefaultRouter()
 stats_router.register(r'', StatsViewSet, basename='stats')

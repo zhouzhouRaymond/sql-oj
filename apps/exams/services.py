@@ -6,13 +6,8 @@
 from django.utils import timezone
 
 from apps.questions.models import Question
-from apps.submissions.idempotency import (
-    find_duplicate_submission,
-    idempotency_key,
-    remember_submission,
-)
-from apps.submissions.judging import JudgeQueueFull, PENDING, enqueue_judge
 from apps.submissions.models import Submission
+from apps.submissions.services import create_submission
 
 from .models import ExamAttempt
 
@@ -20,12 +15,13 @@ from .models import ExamAttempt
 def create_exam_submission(exam, student, question_id, submitted_sql):
     """为某道题创建一条「待判题」的考试提交并交给判题队列。
 
-    相同（学生+考试+题目+SQL 规范化）在幂等窗口内重复调用会复用既有提交，
-    不重复创建判题任务。
+    相同（学生 + 考试 + 题目 + SQL 规范化）在幂等窗口内重复调用会复用既有提交，
+    不重复创建判题任务。落库/幂等/入队的共用逻辑见
+    ``apps.submissions.services.create_submission``。
 
     返回 ``(submission, error)``：
 
-    - ``error`` 为空：已成功入队，``submission`` 即对应记录；
+    - ``error`` 为空：已成功入队（或复用了既有提交），``submission`` 即对应记录；
     - ``error`` 为「题目不存在」：``submission`` 为 None；
     - ``error`` 为「判题服务繁忙」：``submission`` 已落库但状态为 ERROR。
     """
@@ -34,26 +30,10 @@ def create_exam_submission(exam, student, question_id, submitted_sql):
     except Question.DoesNotExist:
         return None, '题目不存在'
 
-    idem_key = idempotency_key(student.id, question.id, exam.id, submitted_sql)
-    duplicate = find_duplicate_submission(
-        Submission, student, question, exam.id, submitted_sql, idem_key
-    )
-    if duplicate is not None:
-        remember_submission(idem_key, duplicate.id)
-        return duplicate, ''
-
-    submission = Submission.objects.create(
-        student=student, question=question, exam=exam,
-        submitted_sql=submitted_sql, execution_status=PENDING, score=0,
-    )
-    try:
-        enqueue_judge(submission.id)
-    except JudgeQueueFull:
-        submission.execution_status = 'ERROR'
-        submission.save(update_fields=['execution_status'])
-        return submission, '判题服务繁忙'
-    remember_submission(idem_key, submission.id)
-    return submission, ''
+    result = create_submission(student, question, submitted_sql, exam=exam)
+    if result.queue_full:
+        return result.submission, '判题服务繁忙'
+    return result.submission, ''
 
 
 def draft_answers_as_list(draft):

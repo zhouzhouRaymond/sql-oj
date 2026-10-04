@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 
 from .models import Exam, ExamAttempt, ExamQuestion
-from .serializers import ExamSerializer, ExamQuestionSerializer
+from .serializers import ExamSerializer
 from .services import finalize_expired_attempts
 from apps.users.permissions import IsTeacher
 from apps.users.models import User
@@ -262,7 +262,9 @@ class ExamViewSet(viewsets.ModelViewSet):
             return Response({'error': 'answers 为必填，格式: [{"question_id": 1, "submitted_sql": "..."}]'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        from .services import PENDING, create_exam_submission
+        from apps.submissions.status import PENDING
+
+        from .services import create_exam_submission
 
         results = []
         queue_full = False
